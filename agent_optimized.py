@@ -29,10 +29,10 @@ with MCPServerAdapter(server_params) as mcp_tools:
     # Agent 1: Excel Reader - Reads the Excel file and extracts targeted data
     excel_reader = Agent(
         role='Excel File Reader',
-        goal='Read Excel files and extract targeted data from specific ranges',
+        goal='Read ALL the sheets present in the given excel file and extract targeted data from specific ranges',
         backstory="""You are an expert Excel file reader who specializes in reading Excel files
         efficiently by targeting specific data ranges. You avoid reading massive ranges that could
-        cause performance issues. You focus on getting workbook metadata first, then reading
+        cause performance issues. You focus on getting workbook metadata first for ALL the sheets, then reading
         smaller, targeted ranges to understand the data structure.""",
         tools=mcp_tools,
         verbose=True,
@@ -43,11 +43,11 @@ with MCPServerAdapter(server_params) as mcp_tools:
     # Agent 2: Data Processor - Analyzes data and identifies clean tabular sections
     data_processor = Agent(
         role='Data Analysis Specialist',
-        goal='Analyze Excel data and identify clean tabular data ranges efficiently',
+        goal='Analyze Excel data of ALL the sheets and identify clean tabular data ranges efficiently from ALL the sheets',
         backstory="""You are a data analysis expert who specializes in identifying meaningful
-        tabular data within Excel files by examining small sample ranges first. You can distinguish 
+        tabular data from ALL the sheets within Excel files by examining small sample ranges first. You can distinguish 
         between headers, formatting rows, empty cells, and actual data. You work efficiently by 
-        examining targeted ranges rather than processing massive amounts of data at once.""",
+        examining targeted ranges of ALL the sheets rather than processing massive amounts of data at once.""",
         tools=mcp_tools,
         verbose=True,
         allow_delegation=False,
@@ -56,73 +56,90 @@ with MCPServerAdapter(server_params) as mcp_tools:
 
     # Agent 3: Excel Writer - Creates new Excel file with cleaned data
     excel_writer = Agent(
-        role='Excel File Writer',
-        goal='Create new Excel files with cleaned and structured data',
-        backstory="""You are an Excel file creation specialist who takes cleaned data and creates
-        new, properly formatted Excel files. You ensure that the output files contain only the
-        essential tabular data without any formatting artifacts or unnecessary elements.""",
+        role='Excel Data Writer and Worksheet Populator',
+        goal='Execute MCP tools to create Excel files and POPULATE each worksheet with actual tabular data from ALL source sheets',
+        backstory="""You are a data transfer specialist who EXECUTES Excel MCP tools to create files and populate them with data.
+        Your primary responsibility is to:
+        1. Execute create_workbook to make the output file
+        2. Execute read_data_from_excel to extract data from each source sheet
+        3. Execute create_worksheet for each sheet (when multiple sheets exist)
+        4. Execute write_data_to_excel to POPULATE each worksheet with the actual extracted data
+        
+        You do NOT provide summaries or descriptions. You EXECUTE the tools and ensure every worksheet contains
+        the actual tabular data from the corresponding source sheet. You verify data transfer completion.""",
         tools=mcp_tools,
         verbose=True,
         allow_delegation=False,
         llm=llm
     )
 
-    # Task 1: Read Excel File Metadata and Sample Data
+    # Task 1: Read Excel File Metadata and Find Data Boundaries
     read_task = Task(
         description=f"""
-        Read the Excel file located at '{input_file}' and extract metadata and sample data.
+        Read the Excel file located at '{input_file}' and find the exact data boundaries for ALL sheets.
         
-        Your task is to:
-        1. Use get_workbook_metadata tool to understand the file structure and sheet names
-        2. For each sheet, read the full width sample range (e.g., A1:AC20) to understand the complete data structure
-        3. Focus on identifying where the actual data starts and what ALL the column headers are
-        4. Make sure to capture the full horizontal extent of the data (columns A through AC or beyond)
-        5. Provide a summary of each sheet's structure and content type including ALL columns
+        MANDATORY MULTI-SHEET PROCESSING:
+        1. Use get_workbook_metadata tool to get ALL sheet names - there should be MULTIPLE sheets
+        2. You MUST process EVERY SINGLE sheet found - do not skip any sheets
+        3. For EACH AND EVERY sheet found:
+           a. Use read_data_from_excel with sheet_name parameter for each individual sheet
+           b. Read a large range (A1:AZ100) to find actual data boundaries for that specific sheet
+           c. Identify the rightmost column containing data for that sheet
+           d. Identify the bottommost row containing data for that sheet
+           e. Record the EXACT data range for that specific sheet
         
-        IMPORTANT: Read the full width of data but limit rows to avoid performance issues. Use ranges like A1:AC20 to capture all columns.
+        CRITICAL: Process ALL sheets individually. If there are 5 sheets, you must process all 5 sheets.
+        Report results for EVERY sheet: Sheet1: range, Sheet2: range, Sheet3: range, etc.
         """,
-        expected_output="Metadata about the Excel file including sheet names, and sample data from small ranges showing the structure and headers of each sheet.",
+        expected_output="Complete list with exact sheet names and precise data ranges for EVERY sheet in the workbook (minimum 2+ sheets expected)",
         agent=excel_reader
     )
 
-    # Task 2: Process and Identify Clean Data Ranges
+    # Task 2: Validate and Confirm Exact Data Ranges
     process_task = Task(
         description=f"""
-        Based on the sample data from the previous task, identify the clean tabular data ranges.
+        Validate the exact data ranges found for ALL sheets in the previous task.
         
-        Your task is to:
-        1. Analyze the sample data to identify which sheet contains the main tabular data
-        2. Determine the approximate row where data starts (after headers/titles)
-        3. Identify the column range that contains meaningful data
-        4. Estimate a reasonable data range (e.g., A49:AC58) that captures the main data table with ALL columns
-        5. Avoid including:
-           - Title rows at the top
-           - Empty rows and columns
-           - Summary/total rows at the bottom
-        6. Provide specific range recommendations for data extraction
+        MULTI-SHEET VALIDATION:
+        1. Take the exact data ranges identified for EVERY sheet in the previous task
+        2. You must have data ranges for MULTIPLE sheets (not just one)
+        3. Confirm these ranges contain the complete tabular data for EACH individual sheet
+        4. Do NOT modify or estimate - use the EXACT ranges found for ALL sheets
+        5. Prepare the extraction plan with exact sheet names and exact ranges for ALL sheets
         
-        Focus on the main data sheet and provide a targeted range that includes ALL columns (A through AC or beyond) for complete data extraction.
+        CRITICAL: Your output must include ALL sheets found in the previous task.
+        Output format for ALL sheets: "Sheet1": A1:Y58, "Sheet2": A49:AC65, "Sheet3": B10:Z30, etc.
         """,
-        expected_output="Specific recommendations for data ranges to extract, including sheet name, starting row, ending row, and column range for the clean tabular data.",
-        agent=data_processor
+        expected_output="Confirmed exact data ranges for ALL sheets with precise coordinates (multiple sheets required)",
+        agent=data_processor,
+        context = [read_task]
     )
 
-    # Task 3: Write Cleaned Data to New Excel File
+    # Task 3: Replicate Excel Structure with Exact Data
     write_task = Task(
         description=f"""
-        Create a new Excel file with only the cleaned tabular data based on the identified ranges.
+        MANDATORY MULTI-SHEET TOOL EXECUTION:
         
-        Your task is to:
-        1. Use the specific data range identified in the previous task
-        2. Read ONLY that specific range using read_data_from_excel with the exact range
-        3. Create a new workbook using create_workbook
-        4. Write the cleaned data to the new file using write_data_to_excel
-        5. Save the cleaned data to '{output_file}'
+        1. FIRST: Execute create_workbook(file_path='{output_file}')
         
-        Make sure to use the exact range specified by the data processor to avoid reading unnecessary data.
+        2. FOR EVERY SINGLE SHEET from previous task (you must process ALL sheets):
+           REPEAT this sequence for EACH sheet:
+           a. Execute read_data_from_excel(file_path='{input_file}', sheet_name='EXACT_SHEET_NAME', range='EXACT_RANGE')
+           b. Execute create_worksheet(file_path='{output_file}', sheet_name='SAME_EXACT_SHEET_NAME')
+           c. Execute write_data_to_excel(file_path='{output_file}', sheet_name='SAME_EXACT_SHEET_NAME', data=extracted_data, start_cell='A1')
+        
+        CRITICAL MULTI-SHEET RULES:
+        - Process EVERY sheet identified in previous task (not just the first one)
+        - If previous task found 5 sheets, you must create 5 output sheets
+        - Use the EXACT sheet names from the source file for ALL sheets
+        - Use the EXACT data ranges identified for ALL sheets
+        - Show tool execution results for EVERY sheet processed
+        
+        You must execute tools for ALL sheets, not just one sheet.
         """,
-        expected_output=f"A new Excel file '{output_file}' containing only the clean tabular data from the specified range.",
-        agent=excel_writer
+        expected_output=f"Tool execution results showing '{output_file}' created with ALL sheets from source file, each populated with data",
+        agent=excel_writer,
+        context = [process_task]
     )
 
     # Create crew with all agents and tasks
