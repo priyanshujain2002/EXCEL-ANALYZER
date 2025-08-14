@@ -1,11 +1,18 @@
-from crewai import Agent
-from crewai_tools import MCPServerAdapter
-from mcp import StdioServerParameters
+#!/usr/bin/env python3
+"""
+Combined Excel Processor - Merges functionality from process_excel.py and multi_sheet_excel_processor.py
+Processes multi-sheet Excel files by splitting them and cleaning each sheet individually.
+"""
+
+import sys
 import os
 import pandas as pd
 from pathlib import Path
 import shutil
+import glob
 from crewai import Agent, Task, Crew, Process, LLM
+from crewai_tools import MCPServerAdapter
+from mcp import StdioServerParameters
 from typing import List, Tuple
 
 def split_excel_by_sheets(input_file_path: str, temp_dir: str = "temp_sheets") -> List[Tuple[str, str, str]]:
@@ -292,57 +299,73 @@ def process_multi_sheet_excel(input_excel_path: str, output_directory: str = "pr
     print(f"\n📁 Output directory: {os.path.abspath(output_directory)}")
     print(f"🎉 Multi-sheet processing completed!")
 
-# Example usage
-if __name__ == "__main__":
-    import sys
-    import glob
+def main():
+    """Main function with user-friendly interface."""
     
-    # Check if input file is provided as command line argument
+    print("📊 Combined Excel Processor")
+    print("=" * 35)
+    
+    # Get input file
     if len(sys.argv) > 1:
+        # File provided as command line argument
         input_file = sys.argv[1]
-        output_directory = sys.argv[2] if len(sys.argv) > 2 else "processed_sheets"
+        output_dir = sys.argv[2] if len(sys.argv) > 2 else "processed_sheets"
+        
+        print(f"Input file: {input_file}")
+        print(f"Output directory: {output_dir}")
+        
     else:
-        # Interactive mode - ask user for input file
-        print("🔍 Multi-Sheet Excel Processor")
-        print("=" * 40)
+        # Interactive mode
+        print("\n🔍 Enter the path to your Excel file:")
+        print("Examples:")
+        print("  - my_file.xlsx")
+        print("  - /path/to/my_file.xlsx")
+        print("  - C:\\Users\\username\\Documents\\file.xlsx")
         
-        # Show available Excel files in current directory
-        excel_files = glob.glob("*.xlsx") + glob.glob("*.xls")
+        input_file = input("\n❓ Excel file path: ").strip()
         
-        if excel_files:
-            print(f"\n📁 Found Excel files in current directory:")
-            for i, file in enumerate(excel_files, 1):
-                print(f"  {i}. {file}")
-            
-            print(f"\nOptions:")
-            print(f"  - Enter file number (1-{len(excel_files)})")
-            print(f"  - Enter full file path")
-            print(f"  - Press Enter to use default: NBCE_The Voice S28_Fall_25_RFP Template (Samsung Ads) 5.13.xlsx")
-            
-            user_input = input(f"\n❓ Select input file: ").strip()
-            
-            if user_input == "":
-                input_file = "NBCE_The Voice S28_Fall_25_RFP Template (Samsung Ads) 5.13.xlsx"
-            elif user_input.isdigit() and 1 <= int(user_input) <= len(excel_files):
-                input_file = excel_files[int(user_input) - 1]
-            else:
-                input_file = user_input
-        else:
-            print(f"\n❌ No Excel files found in current directory.")
-            input_file = input(f"❓ Enter full path to Excel file: ").strip()
+        if not input_file:
+            print("❌ No file specified!")
+            return
+        
+        # Remove quotes if user added them
+        input_file = input_file.strip('"').strip("'")
         
         # Ask for output directory
-        output_directory = input(f"❓ Output directory (press Enter for 'processed_sheets'): ").strip()
-        if not output_directory:
-            output_directory = "processed_sheets"
+        output_dir = input("❓ Output directory (press Enter for 'processed_sheets'): ").strip()
+        if not output_dir:
+            output_dir = "processed_sheets"
     
-    # Validate input file exists
+    # Validate file exists
     if not os.path.exists(input_file):
-        print(f"❌ Error: Input file '{input_file}' not found!")
-        sys.exit(1)
+        print(f"❌ Error: File '{input_file}' not found!")
+        print("Please check the file path and try again.")
+        return
     
-    print(f"\n🚀 Processing: {input_file}")
-    print(f"📁 Output directory: {output_directory}")
+    # Check if it's an Excel file
+    if not input_file.lower().endswith(('.xlsx', '.xls')):
+        print(f"❌ Error: '{input_file}' doesn't appear to be an Excel file!")
+        print("Please provide a .xlsx or .xls file.")
+        return
     
-    # Process the multi-sheet Excel file
-    process_multi_sheet_excel(input_file, output_directory)
+    # Show what will happen
+    print(f"\n🎯 Ready to process:")
+    print(f"  📄 Input: {input_file}")
+    print(f"  📁 Output: {output_dir}/")
+    print(f"  🔄 Each sheet will be processed individually")
+    
+    # Confirm before processing
+    confirm = input(f"\n❓ Continue? (y/n): ").strip().lower()
+    if confirm not in ['y', 'yes']:
+        print("👋 Processing cancelled.")
+        return
+    
+    # Process the file
+    try:
+        process_multi_sheet_excel(input_file, output_dir)
+    except Exception as e:
+        print(f"❌ Error during processing: {str(e)}")
+        print("Please check the error message above and try again.")
+
+if __name__ == "__main__":
+    main()
