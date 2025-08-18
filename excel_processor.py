@@ -301,36 +301,51 @@ def process_multi_sheet_excel(input_excel_path: str, output_directory: str = "pr
 
 # Configuration section
 CONFIG = {
-    'input_file': 'Copy of NBCE_The Voice S28_Fall_25_RFP Template (Samsung Ads) 5.13.xlsx',  # Set your desired path here
-    'output_dir': 'processed_sheets'         # Default output directory
+    'input_dir': 'input_excels',  # Directory containing Excel files
+    'output_base': 'processed_files'  # Base output directory
 }
 
+def find_excel_files(path):
+    """Find all Excel files in a directory or return single file path."""
+    if os.path.isfile(path):
+        return [path] if path.lower().endswith(('.xlsx', '.xls')) else []
+    return glob.glob(os.path.join(path, '*.xlsx')) + glob.glob(os.path.join(path, '*.xls'))
+
 def main():
-    """Main function with hardcoded file path."""
+    """Main function to process all Excel files in input directory."""
     
-    print("📊 Combined Excel Processor")
+    print("📊 Batch Excel Processor")
     print("=" * 35)
     
-    # Validate the configured file exists
-    if not os.path.exists(CONFIG['input_file']):
-        print(f"❌ Error: File '{CONFIG['input_file']}' not found!")
+    # Find all Excel files
+    excel_files = find_excel_files(CONFIG['input_dir'])
+    
+    if not excel_files:
+        print(f"❌ No Excel files found in: {CONFIG['input_dir']}")
         return
     
-    # Check if it's an Excel file
-    if not CONFIG['input_file'].lower().endswith(('.xlsx', '.xls')):
-        print(f"❌ Error: '{CONFIG['input_file']}' is not an Excel file!")
-        return
+    print(f"\nFound {len(excel_files)} Excel files to process:")
+    for file in excel_files:
+        print(f"  - {os.path.basename(file)}")
     
-    print(f"\n🎯 Ready to process:")
-    print(f"  📄 Input: {CONFIG['input_file']}")
-    print(f"  📁 Output: {CONFIG['output_dir']}/")
-    print(f"  🔄 Each sheet will be processed individually")
+    # Create base output directory
+    os.makedirs(CONFIG['output_base'], exist_ok=True)
     
-    # Process the file
-    try:
-        process_multi_sheet_excel(CONFIG['input_file'], CONFIG['output_dir'])
-    except Exception as e:
-        print(f"❌ Error during processing: {str(e)}")
+    # Process each file
+    for input_file in excel_files:
+        try:
+            base_name = Path(input_file).stem
+            output_dir = os.path.join(CONFIG['output_base'], base_name)
+            
+            print(f"\n{'='*60}")
+            print(f"Processing: {os.path.basename(input_file)}")
+            print(f"Output to: {output_dir}/")
+            print(f"{'='*60}")
+            
+            process_multi_sheet_excel(input_file, output_dir)
+        except Exception as e:
+            print(f"❌ Error processing {os.path.basename(input_file)}: {str(e)}")
+            continue
 
 if __name__ == "__main__":
     main()
