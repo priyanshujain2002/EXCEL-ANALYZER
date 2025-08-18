@@ -299,73 +299,38 @@ def process_multi_sheet_excel(input_excel_path: str, output_directory: str = "pr
     print(f"\n📁 Output directory: {os.path.abspath(output_directory)}")
     print(f"🎉 Multi-sheet processing completed!")
 
+# Configuration section
+CONFIG = {
+    'input_file': 'Copy of NBCE_The Voice S28_Fall_25_RFP Template (Samsung Ads) 5.13.xlsx',  # Set your desired path here
+    'output_dir': 'processed_sheets'         # Default output directory
+}
+
 def main():
-    """Main function with user-friendly interface."""
+    """Main function with hardcoded file path."""
     
     print("📊 Combined Excel Processor")
     print("=" * 35)
     
-    # Get input file
-    if len(sys.argv) > 1:
-        # File provided as command line argument
-        input_file = sys.argv[1]
-        output_dir = sys.argv[2] if len(sys.argv) > 2 else "processed_sheets"
-        
-        print(f"Input file: {input_file}")
-        print(f"Output directory: {output_dir}")
-        
-    else:
-        # Interactive mode
-        print("\n🔍 Enter the path to your Excel file:")
-        print("Examples:")
-        print("  - my_file.xlsx")
-        print("  - /path/to/my_file.xlsx")
-        print("  - C:\\Users\\username\\Documents\\file.xlsx")
-        
-        input_file = input("\n❓ Excel file path: ").strip()
-        
-        if not input_file:
-            print("❌ No file specified!")
-            return
-        
-        # Remove quotes if user added them
-        input_file = input_file.strip('"').strip("'")
-        
-        # Ask for output directory
-        output_dir = input("❓ Output directory (press Enter for 'processed_sheets'): ").strip()
-        if not output_dir:
-            output_dir = "processed_sheets"
-    
-    # Validate file exists
-    if not os.path.exists(input_file):
-        print(f"❌ Error: File '{input_file}' not found!")
-        print("Please check the file path and try again.")
+    # Validate the configured file exists
+    if not os.path.exists(CONFIG['input_file']):
+        print(f"❌ Error: File '{CONFIG['input_file']}' not found!")
         return
     
     # Check if it's an Excel file
-    if not input_file.lower().endswith(('.xlsx', '.xls')):
-        print(f"❌ Error: '{input_file}' doesn't appear to be an Excel file!")
-        print("Please provide a .xlsx or .xls file.")
+    if not CONFIG['input_file'].lower().endswith(('.xlsx', '.xls')):
+        print(f"❌ Error: '{CONFIG['input_file']}' is not an Excel file!")
         return
     
-    # Show what will happen
     print(f"\n🎯 Ready to process:")
-    print(f"  📄 Input: {input_file}")
-    print(f"  📁 Output: {output_dir}/")
+    print(f"  📄 Input: {CONFIG['input_file']}")
+    print(f"  📁 Output: {CONFIG['output_dir']}/")
     print(f"  🔄 Each sheet will be processed individually")
-    
-    # Confirm before processing
-    confirm = input(f"\n❓ Continue? (y/n): ").strip().lower()
-    if confirm not in ['y', 'yes']:
-        print("👋 Processing cancelled.")
-        return
     
     # Process the file
     try:
-        process_multi_sheet_excel(input_file, output_dir)
+        process_multi_sheet_excel(CONFIG['input_file'], CONFIG['output_dir'])
     except Exception as e:
         print(f"❌ Error during processing: {str(e)}")
-        print("Please check the error message above and try again.")
 
 if __name__ == "__main__":
     main()
