@@ -720,3 +720,8 @@ def run_stdio():
         raise
     finally:
         logger.info("Server shutdown complete")
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(run_stdio())
