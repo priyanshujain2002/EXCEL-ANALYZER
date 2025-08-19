@@ -23,14 +23,39 @@ def ask_question(question: str, excel_files: list):
         }
     }
     
-    # Create separate Excel knowledge sources for each file (without explicit engine)
+    # Create separate Excel knowledge sources for each of the 7 files (without explicit engine)
     excel_source_1 = ExcelKnowledgeSource(
-        file_paths=["cleaned_NBCE_The Voice S28_Fall_25_RFP Template (Samsung Ads) 5.13_400K_Media_Plan.xlsx"],
+        file_paths=["cleaned_Copy of USA_ The Rainmaker_RFP Template 5.5_350K1_Media_Plan.xlsx"],
         embedder=embedder_config
     )
     
     excel_source_2 = ExcelKnowledgeSource(
-        file_paths=["cleaned_NBCE_The Voice S28_Fall_25_RFP Template (Samsung Ads) 5.13_High_Impact.xlsx"],
+        file_paths=["cleaned_Copy of USA_ The Rainmaker_RFP Template 5.5_350K_Media_Plan.xlsx"],
+        embedder=embedder_config
+    )
+    
+    excel_source_3 = ExcelKnowledgeSource(
+        file_paths=["cleaned_Copy of USA_ The Rainmaker_RFP Template 5.5_Display_Specs.xlsx"],
+        embedder=embedder_config
+    )
+    
+    excel_source_4 = ExcelKnowledgeSource(
+        file_paths=["cleaned_Copy of USA_ The Rainmaker_RFP Template 5.5_Drop_Downs.xlsx"],
+        embedder=embedder_config
+    )
+    
+    excel_source_5 = ExcelKnowledgeSource(
+        file_paths=["cleaned_Copy of USA_ The Rainmaker_RFP Template 5.5_Max_Avails.xlsx"],
+        embedder=embedder_config
+    )
+    
+    excel_source_6 = ExcelKnowledgeSource(
+        file_paths=["cleaned_Copy of USA_ The Rainmaker_RFP Template 5.5_Targeting_Summary.xlsx"],
+        embedder=embedder_config
+    )
+    
+    excel_source_7 = ExcelKnowledgeSource(
+        file_paths=["cleaned_Copy of USA_ The Rainmaker_RFP Template 5.5_Video_Specs.xlsx"],
         embedder=embedder_config
     )
     
@@ -38,14 +63,30 @@ def ask_question(question: str, excel_files: list):
     agent = Agent(
         role='Media Plan Expert',
         goal='Answer questions about media plans by analyzing Excel files with package information',
-        backstory="""You are a media planning expert who analyzes all provided Excel files containing advertising packages.
+        backstory="""You are a media planning expert who analyzes comprehensive media plans (advertising plans) consisting of different packages according to customer requirements and budget.
         
-        IMPORTANT: Always start by finding the "Package Name" column in each Excel file first, 
-        then use that as your reference to answer user queries about packages across all files.
+        UNDERSTANDING MEDIA PLAN STRUCTURE:
+        - Media plans contain different types of packages based on customer requirements and budget
+        - Original Plan Packages: Packages perfectly aligned with customer requirements and budget
+        - High Impact Packages: Upselling packages that suit client requirements but are additions to their budget
+        - Combined Files: Some files may contain both original and high impact packages together
+        
+        PACKAGE IDENTIFICATION STRATEGY:
+        1. Always start by finding the "Package Name" column in each Excel file
+        2. If there's a dedicated high impact file, identify high impact packages from there
+        3. If no separate high impact file exists, compare package columns between files:
+           - Look for 2 files: one with original plan, one with original + high impact combined
+           - Compare package names between these files to identify which are high impact packages
+           - High impact packages will be present in the combined file but absent in the original-only file
+        
+        ANALYSIS APPROACH:
+        - Analyze all provided Excel files comprehensively
+        - Cross-reference package information across all files for comprehensive answers
+        - Clearly distinguish between original plan packages and high impact (upselling) packages
         
         You must ONLY use information from the provided Excel knowledge sources.
         If information is not available, clearly state this limitation.""",
-        knowledge_sources=[excel_source_1, excel_source_2],
+        knowledge_sources=[excel_source_1, excel_source_2, excel_source_3, excel_source_4, excel_source_5, excel_source_6, excel_source_7],
         embedder=embedder_config,
         llm=llm,
         verbose=True,
@@ -57,9 +98,16 @@ def ask_question(question: str, excel_files: list):
         description=f"""
         Answer this question about media plans: "{question}"
         
-        Process:
-        1. First, find the "Package Name" column in all available Excel files
-        2. Then answer the user's query using the package information from all files
+        COMPREHENSIVE ANALYSIS PROCESS:
+        1. Identify all available Excel files and analyze their content
+        2. Locate "Package Name" columns in all relevant files
+        3. Distinguish between package types:
+           - Original plan packages (aligned with customer budget/requirements)
+           - High impact packages (upselling opportunities)
+        4. If separate high impact file exists, use it to identify high impact packages
+        5. If no separate high impact file, compare package columns between files to identify high impact packages
+        6. Cross-reference package information across all files for complete analysis
+        7. Provide comprehensive answer distinguishing between original and high impact packages when relevant
         
         You must ONLY use information from the provided Excel knowledge sources.
         """,
