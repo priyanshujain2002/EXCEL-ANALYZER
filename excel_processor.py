@@ -10,6 +10,7 @@ import pandas as pd
 from pathlib import Path
 import shutil
 import glob
+import openpyxl
 from crewai import Agent, Task, Crew, Process, LLM
 from crewai_tools import MCPServerAdapter
 from mcp import StdioServerParameters
@@ -35,12 +36,17 @@ def split_excel_by_sheets(input_file_path: str, temp_dir: str = "temp_sheets") -
     split_info = []
     
     try:
-        # Load the Excel file to get sheet names
+        # Load the Excel file with openpyxl to check sheet visibility
+        wb = openpyxl.load_workbook(input_file_path, read_only=True)
         excel_file = pd.ExcelFile(input_file_path)
         
         print(f"Found {len(excel_file.sheet_names)} sheets in {input_file_path}")
         
         for sheet_name in excel_file.sheet_names:
+            # Skip all types of hidden sheets (hidden and veryHidden)
+            if wb[sheet_name].sheet_state != 'visible':
+                print(f"Skipping hidden sheet ({wb[sheet_name].sheet_state}): {sheet_name}")
+                continue
             # Clean sheet name for filename (remove invalid characters)
             clean_sheet_name = "".join(c for c in sheet_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
             clean_sheet_name = clean_sheet_name.replace(' ', '_')

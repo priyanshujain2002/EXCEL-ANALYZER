@@ -23,41 +23,18 @@ def ask_question(question: str, excel_files: list):
         }
     }
     
-    # Create separate Excel knowledge sources for each of the 7 files (without explicit engine)
-    excel_source_1 = ExcelKnowledgeSource(
-        file_paths=["cleaned_Copy of USA_ The Rainmaker_RFP Template 5.5_350K1_Media_Plan.xlsx"],
-        embedder=embedder_config
-    )
-    
-    excel_source_2 = ExcelKnowledgeSource(
-        file_paths=["cleaned_Copy of USA_ The Rainmaker_RFP Template 5.5_350K_Media_Plan.xlsx"],
-        embedder=embedder_config
-    )
-    
-    excel_source_3 = ExcelKnowledgeSource(
-        file_paths=["cleaned_Copy of USA_ The Rainmaker_RFP Template 5.5_Display_Specs.xlsx"],
-        embedder=embedder_config
-    )
-    
-    excel_source_4 = ExcelKnowledgeSource(
-        file_paths=["cleaned_Copy of USA_ The Rainmaker_RFP Template 5.5_Drop_Downs.xlsx"],
-        embedder=embedder_config
-    )
-    
-    excel_source_5 = ExcelKnowledgeSource(
-        file_paths=["cleaned_Copy of USA_ The Rainmaker_RFP Template 5.5_Max_Avails.xlsx"],
-        embedder=embedder_config
-    )
-    
-    excel_source_6 = ExcelKnowledgeSource(
-        file_paths=["cleaned_Copy of USA_ The Rainmaker_RFP Template 5.5_Targeting_Summary.xlsx"],
-        embedder=embedder_config
-    )
-    
-    excel_source_7 = ExcelKnowledgeSource(
-        file_paths=["cleaned_Copy of USA_ The Rainmaker_RFP Template 5.5_Video_Specs.xlsx"],
-        embedder=embedder_config
-    )
+    # Automatically create Excel knowledge sources for all files in knowledge directory
+    # Since ExcelKnowledgeSource searches under knowledge directory automatically,
+    # we only need the filenames without the "knowledge/" prefix
+    excel_sources = []
+    for excel_file in excel_files:
+        # Extract just the filename (remove "knowledge/" prefix)
+        filename = os.path.basename(excel_file)
+        excel_source = ExcelKnowledgeSource(
+            file_paths=[filename],
+            embedder=embedder_config
+        )
+        excel_sources.append(excel_source)
     
     # Create specialized agents
     query_interpreter = Agent(
@@ -69,7 +46,7 @@ def ask_question(question: str, excel_files: list):
         are most relevant for answering user questions. You understand media planning terminology,
         package structures, and can distinguish between different types of analysis needed
         (comparisons, summaries, calculations, etc.).""",
-        knowledge_sources=[excel_source_1, excel_source_2, excel_source_3, excel_source_4, excel_source_5, excel_source_6, excel_source_7],
+        knowledge_sources=excel_sources,
         embedder=embedder_config,
         llm=llm,
         verbose=True,
@@ -87,7 +64,7 @@ def ask_question(question: str, excel_files: list):
         - Package categorization and classification
         You have deep expertise in media planning package structures and can perform sophisticated
         comparisons to identify upselling opportunities and package variations.""",
-        knowledge_sources=[excel_source_1, excel_source_2, excel_source_3, excel_source_4, excel_source_5, excel_source_6, excel_source_7],
+        knowledge_sources=excel_sources,
         embedder=embedder_config,
         llm=llm,
         verbose=True,
@@ -106,7 +83,7 @@ def ask_question(question: str, excel_files: list):
         - Availability and targeting summaries
         You excel at understanding business data, financial information, and operational metrics
         within the context of media planning and advertising campaigns.""",
-        knowledge_sources=[excel_source_1, excel_source_2, excel_source_3, excel_source_4, excel_source_5, excel_source_6, excel_source_7],
+        knowledge_sources=excel_sources,
         embedder=embedder_config,
         llm=llm,
         verbose=True,
@@ -125,7 +102,7 @@ def ask_question(question: str, excel_files: list):
         - Present comparative analysis results clearly
         - Highlight key insights and business implications
         Your reports help stakeholders make informed decisions about media planning strategies.""",
-        knowledge_sources=[excel_source_1, excel_source_2, excel_source_3, excel_source_4, excel_source_5, excel_source_6, excel_source_7],
+        knowledge_sources=excel_sources,
         embedder=embedder_config,
         llm=llm,
         verbose=True,
