@@ -48,7 +48,7 @@ def split_excel_by_sheets(input_file_path: str, temp_dir: str = "temp_sheets") -
                 print(f"Skipping hidden sheet ({wb[sheet_name].sheet_state}): {sheet_name}")
                 continue
             # Clean sheet name for filename (remove invalid characters)
-            clean_sheet_name = "".join(c for c in sheet_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            clean_sheet_name = "".join(c for c in sheet_name if c.isalnum() or c in (' ', '-', '_', '+')).rstrip()
             clean_sheet_name = clean_sheet_name.replace(' ', '_')
             
             # Create split file path
@@ -145,11 +145,12 @@ def process_single_sheet_file(input_file: str, output_file: str, sheet_name: str
             # Agent 3: Excel Writer
             excel_writer = Agent(
                 role='Excel File Writer',
-                goal='Create new Excel files with cleaned and structured data',
-                backstory=f"""You are an Excel file creation specialist processing the '{sheet_name}' sheet. 
-                You take cleaned data and create new, properly formatted Excel files. You ensure that the 
-                output files contain only the essential tabular data without any formatting artifacts or 
-                unnecessary elements.""",
+                goal='Create new Excel files with ALL extracted data preserved completely',
+                backstory=f"""You are an Excel file creation specialist processing the '{sheet_name}' sheet.
+                You take cleaned data and create new, properly formatted Excel files. You are CRITICAL about
+                data preservation - you MUST ensure that EVERY SINGLE CELL of data that was extracted from
+                the input range is written to the output file. You NEVER leave columns blank or skip any data.
+                Your primary responsibility is complete data integrity and preservation.""",
                 tools=mcp_tools,
                 verbose=True,
                 allow_delegation=False,
@@ -179,39 +180,52 @@ def process_single_sheet_file(input_file: str, output_file: str, sheet_name: str
                 description=f"""
                 Based on the sample data from the previous task, identify the clean tabular data ranges from the '{sheet_name}' sheet.
                 
-                Your task is to:
+                CRITICAL REQUIREMENTS FOR COMPLETE DATA EXTRACTION:
                 1. Analyze the sample data to identify where the main tabular data is located
-                2. Determine the approximate row where data starts (after headers/titles)
-                3. Identify the column range that contains meaningful data
-                4. Estimate a reasonable data range (e.g., A49:AC58) that captures the main data table with ALL columns
-                5. Avoid including:
+                2. Determine the exact row where data starts (after headers/titles)
+                3. Identify the COMPLETE column range that contains ALL meaningful data
+                4. Estimate a data range (e.g., A49:AC58) that captures the ENTIRE data table with ALL columns
+                5. INCLUDE all columns that have any data, even if some cells are empty
+                6. Avoid including only:
                    - Title rows at the top
-                   - Empty rows and columns
+                   - Completely empty rows and columns at the edges
                    - Summary/total rows at the bottom
-                6. Provide specific range recommendations for data extraction
+                7. Provide specific range recommendations for COMPLETE data extraction
                 
-                Focus on extracting clean tabular data and provide a targeted range that includes ALL columns for complete data extraction.
+                MANDATORY: Your range MUST include ALL columns that contain any data. Do not exclude columns
+                just because they have some empty cells. The goal is COMPLETE data preservation, not selective extraction.
+                
+                Focus on extracting ALL tabular data and provide a range that captures the FULL width of the data table.
                 """,
-                expected_output=f"Specific recommendations for data ranges to extract from '{sheet_name}' sheet, including starting row, ending row, and column range for the clean tabular data.",
+                expected_output=f"Specific recommendations for COMPLETE data ranges to extract from '{sheet_name}' sheet, including starting row, ending row, and the FULL column range that captures ALL data columns.",
                 agent=data_processor
             )
 
             # Task 3: Write Cleaned Data to New Excel File
             write_task = Task(
                 description=f"""
-                Create a new Excel file with only the cleaned tabular data from the '{sheet_name}' sheet based on the identified ranges.
+                Create a new Excel file with ALL the cleaned tabular data from the '{sheet_name}' sheet based on the identified ranges.
                 
-                Your task is to:
+                CRITICAL DATA PRESERVATION REQUIREMENTS:
                 1. Use the specific data range identified in the previous task
                 2. Read ONLY that specific range using read_data_from_excel with the exact range
                 3. Create a new workbook using create_workbook
-                4. Write the cleaned data to the new file using write_data_to_excel
-                5. Save the cleaned data to '{output_file}'
+                4. Write ALL the extracted data to the new file using write_data_to_excel
+                5. Save the complete data to '{output_file}'
+                
+                MANDATORY DATA INTEGRITY CHECKS:
+                - VERIFY that every column from the extracted range is written to the output file
+                - ENSURE no columns are left blank or missing in the output
+                - CONFIRM that the number of columns in output matches the extracted range
+                - VALIDATE that all data values are preserved exactly as extracted
+                
+                FAILURE TO PRESERVE ALL DATA IS UNACCEPTABLE. You must write every single cell of data
+                that was extracted from the input range. If any column appears blank in the output,
+                you have failed your primary responsibility.
                 
                 The output file name '{os.path.basename(output_file)}' is specifically designed to map back to the original '{sheet_name}' sheet.
-                Make sure to use the exact range specified by the data processor to avoid reading unnecessary data.
                 """,
-                expected_output=f"A new Excel file '{output_file}' containing only the clean tabular data from the '{sheet_name}' sheet.",
+                expected_output=f"A new Excel file '{output_file}' containing ALL the clean tabular data from the '{sheet_name}' sheet with complete data preservation - no missing columns or blank data.",
                 agent=excel_writer
             )
 
