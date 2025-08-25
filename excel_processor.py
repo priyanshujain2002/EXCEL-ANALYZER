@@ -11,10 +11,19 @@ from pathlib import Path
 import shutil
 import glob
 import openpyxl
+import logging
 from crewai import Agent, Task, Crew, Process, LLM
 from crewai_tools import MCPServerAdapter
 from mcp import StdioServerParameters
 from typing import List, Tuple
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    
+)
+logger = logging.getLogger(__name__)
 
 def split_excel_by_sheets(input_file_path: str, temp_dir: str = "temp_sheets") -> List[Tuple[str, str, str]]:
     """
@@ -58,11 +67,24 @@ def split_excel_by_sheets(input_file_path: str, temp_dir: str = "temp_sheets") -
             # Create output file name (what the agent will produce)
             output_filename = f"cleaned_{base_filename}_{clean_sheet_name}.xlsx"
             
-            # Read the specific sheet and save as new Excel file
-            df = pd.read_excel(input_file_path, sheet_name=sheet_name, header=None)
+            # Read the specific sheet and save as new Excel file preserving all data
+            df = pd.read_excel(input_file_path, sheet_name=sheet_name, header=None, keep_default_na=False)
+            
+            # Log original data dimensions
+            logger.info(f"Sheet '{sheet_name}': Original data dimensions {df.shape[0]} rows x {df.shape[1]} columns")
             
             with pd.ExcelWriter(split_file_path, engine='openpyxl') as writer:
                 df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)
+            
+            # Validate split file was created correctly
+            try:
+                test_df = pd.read_excel(split_file_path, sheet_name=sheet_name, header=None, keep_default_na=False)
+                if test_df.shape != df.shape:
+                    logger.warning(f"Sheet '{sheet_name}': Dimension mismatch after split - Original: {df.shape}, Split: {test_df.shape}")
+                else:
+                    logger.info(f"Sheet '{sheet_name}': Split file validated successfully")
+            except Exception as e:
+                logger.error(f"Sheet '{sheet_name}': Failed to validate split file: {str(e)}")
             
             split_info.append((sheet_name, os.path.abspath(split_file_path), output_filename))
             print(f"Created: {split_filename} -> Output will be: {output_filename}")
@@ -79,7 +101,7 @@ def process_single_sheet_file(input_file: str, output_file: str, sheet_name: str
     
     Args:
         input_file (str): Path to input Excel file
-        output_file (str): Path to output Excel file  
+        output_file (str): Path to output Excel file
         sheet_name (str): Name of the original sheet (for context)
         
     Returns:
@@ -90,6 +112,19 @@ def process_single_sheet_file(input_file: str, output_file: str, sheet_name: str
     input_file = os.path.abspath(input_file)
     output_file = os.path.abspath(output_file)
     
+    # Validate input file exists
+    if not os.path.exists(input_file):
+        print(f"❌ Input file not found: {input_file}")
+        return False
+    
+    # Validate input file is readable
+    try:
+        test_wb = openpyxl.load_workbook(input_file, read_only=True)
+        test_wb.close()
+    except Exception as e:
+        print(f"❌ Cannot read input file {input_file}: {str(e)}")
+        return False
+    
     server_params = StdioServerParameters(
         command="python3",
         args=["-m", "excel_mcp", "stdio"],
@@ -97,7 +132,7 @@ def process_single_sheet_file(input_file: str, output_file: str, sheet_name: str
     )
     
     llm = LLM(
-        model="bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+        model="bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0",
         aws_region_name="us-east-1",
         temperature=0.2,
     )
@@ -115,117 +150,154 @@ def process_single_sheet_file(input_file: str, output_file: str, sheet_name: str
             # Agent 1: Excel Reader
             excel_reader = Agent(
                 role='Excel File Reader',
-                goal='Read Excel files and extract targeted data from specific ranges',
-                backstory=f"""You are an expert Excel file reader processing the '{sheet_name}' sheet. 
-                You specialize in reading Excel files efficiently by targeting specific data ranges. 
-                You avoid reading massive ranges that could cause performance issues. You focus on 
-                getting workbook metadata first, then reading smaller, targeted ranges to understand 
-                the data structure.""",
+                goal='Read Excel files and identify column headers for targeted data extraction',
+                backstory=f"""You are an expert Excel file reader processing the '{sheet_name}' sheet.
+                You specialize in reading Excel files efficiently by targeting specific data ranges.
+                You avoid reading massive ranges that could cause performance issues. You focus on
+                getting workbook metadata first, then reading smaller, targeted ranges to understand
+                the data structure and identify column headers.
+                You are particularly skilled at identifying column headers and understanding the full
+                horizontal extent of tabular data to locate specific columns.""",
                 tools=mcp_tools,
                 verbose=True,
                 allow_delegation=False,
                 llm=llm
             )
 
-            # Agent 2: Data Processor
+            # Agent 2: Column Identifier and Data Processor
             data_processor = Agent(
-                role='Data Analysis Specialist',
-                goal='Analyze Excel data and identify clean tabular data ranges efficiently',
-                backstory=f"""You are a data analysis expert processing the '{sheet_name}' sheet. 
-                You specialize in identifying meaningful tabular data within Excel files by examining 
-                small sample ranges first. You can distinguish between headers, formatting rows, empty 
-                cells, and actual data. You work efficiently by examining targeted ranges rather than 
-                processing massive amounts of data at once.""",
+                role='Column Identification Specialist',
+                goal='Identify available columns from the target set: Group Name, Placement Name, SOV, Start Date, End Date, Units, Cost, and Rate',
+                backstory=f"""You are a column identification expert processing the '{sheet_name}' sheet.
+                You specialize in analyzing Excel column headers to identify up to 8 specific columns:
+                1. Group Name (may also be called: Package Name, Group, Package, Campaign Group)
+                2. Placement Name (may also be called: Placement, Ad Placement, Creative Name, Asset Name)
+                3. SOV (may also be called: Share of Voice, SOV%, Share, Voice Share)
+                4. Start Date (may also be called: Start, Begin Date, Campaign Start, Flight Start)
+                5. End Date (may also be called: End, Finish Date, Campaign End, Flight End)
+                6. Units (may also be called: Budget, Quantity, Volume, Impressions, Spots)
+                7. Cost (may also be called: Price, Amount, Total Cost, Investment, Spend)
+                8. Rate (may also be called: CPM, CPC, CPV, Unit Rate, Price Rate, Media Rate)
+                
+                IMPORTANT: Not all sheets will contain all 8 columns. You should identify and extract
+                whichever columns are present from this target list. If only 3 or 4 of these columns
+                exist in a sheet, that's perfectly acceptable - extract what's available.
+                You are intelligent about recognizing these columns even with different naming conventions.
+                You analyze header rows to map the actual column names to these target columns.
+                You identify the exact column positions (like A, B, C, etc.) for each available target column.""",
                 tools=mcp_tools,
                 verbose=True,
                 allow_delegation=False,
                 llm=llm
             )
 
-            # Agent 3: Excel Writer
+            # Agent 3: Selective Excel Writer
             excel_writer = Agent(
-                role='Excel File Writer',
-                goal='Create new Excel files with ALL extracted data preserved completely',
-                backstory=f"""You are an Excel file creation specialist processing the '{sheet_name}' sheet.
-                You take cleaned data and create new, properly formatted Excel files. You are CRITICAL about
-                data preservation - you MUST ensure that EVERY SINGLE CELL of data that was extracted from
-                the input range is written to the output file. You NEVER leave columns blank or skip any data.
-                Your primary responsibility is complete data integrity and preservation.""",
+                role='Selective Excel File Writer',
+                goal='Create new Excel files with ONLY the available identified columns and ALL their data',
+                backstory=f"""You are a selective Excel file creation specialist processing the '{sheet_name}' sheet.
+                You take whichever columns were identified from the target set (Group Name, Placement Name, SOV,
+                Start Date, End Date, Units, Cost, Rate) and create new, properly formatted Excel files containing
+                ONLY these available columns.
+                
+                IMPORTANT: Not all sheets will have all 8 target columns. You should work with whatever
+                columns were successfully identified - whether that's 2, 4, 6, or all 8 columns.
+                
+                You are CRITICAL about data preservation for the identified columns - you MUST ensure that
+                EVERY SINGLE ROW of data from the available columns is written to the output file.
+                You preserve the original column headers and extract ALL rows of data for the identified columns only.
+                You create a clean, focused output with just the available target columns and all their associated data.""",
                 tools=mcp_tools,
                 verbose=True,
                 allow_delegation=False,
                 llm=llm
             )
 
-            # Task 1: Read Excel File Metadata and Sample Data
+            # Task 1: Read Excel File Metadata and Identify Column Headers
             read_task = Task(
                 description=f"""
                 Read the Excel file located at '{input_file}' which contains data from the original '{sheet_name}' sheet.
                 
                 Your task is to:
                 1. Use get_workbook_metadata tool to understand the file structure and sheet names
-                2. Read the full width sample range (e.g., A1:AC20) to understand the complete data structure
-                3. Focus on identifying where the actual data starts and what ALL the column headers are
-                4. Make sure to capture the full horizontal extent of the data (columns A through AC or beyond)
-                5. Provide a summary of the sheet's structure and content type including ALL columns
+                2. For each sheet, read a wide sample range (e.g., A1:AC20) to capture all possible column headers
+                3. Focus on identifying where the column headers are located and what they are called
+                4. Look for headers that might correspond to these 8 target columns:
+                   - Group Name (or Package Name, Group, Package, Campaign Group)
+                   - Placement Name (or Placement, Ad Placement, Creative Name, Asset Name)
+                   - SOV (or Share of Voice, SOV%, Share, Voice Share)
+                   - Start Date (or Start, Begin Date, Campaign Start, Flight Start)
+                   - End Date (or End, Finish Date, Campaign End, Flight End)
+                   - Units (or Budget, Quantity, Volume, Impressions, Spots)
+                   - Cost (or Price, Amount, Total Cost, Investment, Spend)
+                   - Rate (or CPM, CPC, CPV, Unit Rate, Price Rate, Media Rate)
+                5. Identify the row where actual data starts (after headers)
+                6. Provide detailed information about all column headers found
                 
-                IMPORTANT: This file contains data from the '{sheet_name}' sheet. Read the full width of data but limit rows to avoid performance issues.
+                IMPORTANT: Read wide enough to capture all possible columns but focus on header identification.
                 """,
-                expected_output=f"Metadata about the Excel file from '{sheet_name}' sheet, including sample data showing the structure and headers.",
+                expected_output=f"Detailed metadata about the Excel file from '{sheet_name}' sheet, including all column headers found and their positions, with special attention to identifying the 8 target columns.",
                 agent=excel_reader
             )
 
-            # Task 2: Process and Identify Clean Data Ranges
+            # Task 2: Identify and Map the Available Target Columns
             process_task = Task(
                 description=f"""
-                Based on the sample data from the previous task, identify the clean tabular data ranges from the '{sheet_name}' sheet.
+                Based on the column headers from the previous task, identify and map the available target columns from the '{sheet_name}' sheet.
                 
-                CRITICAL REQUIREMENTS FOR COMPLETE DATA EXTRACTION:
-                1. Analyze the sample data to identify where the main tabular data is located
-                2. Determine the exact row where data starts (after headers/titles)
-                3. Identify the COMPLETE column range that contains ALL meaningful data
-                4. Estimate a data range (e.g., A49:AC58) that captures the ENTIRE data table with ALL columns
-                5. INCLUDE all columns that have any data, even if some cells are empty
-                6. Avoid including only:
-                   - Title rows at the top
-                   - Completely empty rows and columns at the edges
-                   - Summary/total rows at the bottom
-                7. Provide specific range recommendations for COMPLETE data extraction
+                Your task is to:
+                1. Analyze all the column headers to identify which ones correspond to these target columns:
+                   - Group Name (variations: Package Name, Group, Package, Campaign Group)
+                   - Placement Name (variations: Placement, Ad Placement, Creative Name, Asset Name)
+                   - SOV (variations: Share of Voice, SOV%, Share, Voice Share)
+                   - Start Date (variations: Start, Begin Date, Campaign Start, Flight Start)
+                   - End Date (variations: End, Finish Date, Campaign End, Flight End)
+                   - Units (variations: Budget, Quantity, Volume, Impressions, Spots)
+                   - Cost (variations: Price, Amount, Total Cost, Investment, Spend)
+                   - Rate (variations: CPM, CPC, CPV, Unit Rate, Price Rate, Media Rate)
                 
-                MANDATORY: Your range MUST include ALL columns that contain any data. Do not exclude columns
-                just because they have some empty cells. The goal is COMPLETE data preservation, not selective extraction.
+                2. For each target column that IS FOUND in the sheet, identify:
+                   - The exact column letter (A, B, C, etc.)
+                   - The actual header name found in the sheet
+                   - The row where the header is located
+                   - The row where data starts
                 
-                Focus on extracting ALL tabular data and provide a range that captures the FULL width of the data table.
+                3. Determine the data range for extraction (start row to end row)
+                4. Create a mapping of available target columns to actual column positions
+                5. Report which target columns were found and which ones are missing
+                6. IMPORTANT: It's completely normal if only some of the target columns are present
+                
+                Focus on intelligent matching - be flexible with column name variations but ensure accuracy.
+                Extract whatever target columns are available in this sheet.
                 """,
-                expected_output=f"Specific recommendations for COMPLETE data ranges to extract from '{sheet_name}' sheet, including starting row, ending row, and the FULL column range that captures ALL data columns.",
+                expected_output=f"A complete mapping of the available target columns to their actual positions in the '{sheet_name}' sheet, including column letters, header names, and data range information. Report which target columns were found and which ones are missing (missing columns are acceptable).",
                 agent=data_processor
             )
 
-            # Task 3: Write Cleaned Data to New Excel File
+            # Task 3: Extract and Write Only the Available Target Columns
             write_task = Task(
                 description=f"""
-                Create a new Excel file with ALL the cleaned tabular data from the '{sheet_name}' sheet based on the identified ranges.
+                Create a new Excel file containing ONLY the available target columns and ALL their data from the '{sheet_name}' sheet.
                 
-                CRITICAL DATA PRESERVATION REQUIREMENTS:
-                1. Use the specific data range identified in the previous task
-                2. Read ONLY that specific range using read_data_from_excel with the exact range
+                Your task is to:
+                1. Use the column mapping from the previous task to identify the exact columns to extract
+                2. For each target column that was found in the sheet:
+                   - Read the complete column data using read_data_from_excel
+                   - Include the header row and ALL data rows for that column
                 3. Create a new workbook using create_workbook
-                4. Write ALL the extracted data to the new file using write_data_to_excel
-                5. Save the complete data to '{output_file}'
+                4. Write ONLY the identified target columns to the new file in this preferred order (skip missing ones):
+                   - Group Name, Placement Name, SOV, Start Date, End Date, Units, Cost, Rate
+                5. Preserve the original header names as found in the source
+                6. Include ALL rows of data for these columns (no data should be skipped)
+                7. Save the result to '{output_file}'
+                8. IMPORTANT: Work with whatever columns were found - could be 2, 4, 6, or all 8 columns
                 
-                MANDATORY DATA INTEGRITY CHECKS:
-                - VERIFY that every column from the extracted range is written to the output file
-                - ENSURE no columns are left blank or missing in the output
-                - CONFIRM that the number of columns in output matches the extracted range
-                - VALIDATE that all data values are preserved exactly as extracted
-                
-                FAILURE TO PRESERVE ALL DATA IS UNACCEPTABLE. You must write every single cell of data
-                that was extracted from the input range. If any column appears blank in the output,
-                you have failed your primary responsibility.
+                CRITICAL: Extract ALL data rows for the identified columns - every single row of data must be preserved.
+                The output should be a clean, focused dataset with only the available target columns and all their data.
                 
                 The output file name '{os.path.basename(output_file)}' is specifically designed to map back to the original '{sheet_name}' sheet.
                 """,
-                expected_output=f"A new Excel file '{output_file}' containing ALL the clean tabular data from the '{sheet_name}' sheet with complete data preservation - no missing columns or blank data.",
+                expected_output=f"A new Excel file '{output_file}' containing ONLY the available target columns (from: Group Name, Placement Name, SOV, Start Date, End Date, Units, Cost, Rate) with ALL their data from the '{sheet_name}' sheet. The file should have clean headers and complete data for each identified column, regardless of how many target columns were found.",
                 agent=excel_writer
             )
 
@@ -238,6 +310,47 @@ def process_single_sheet_file(input_file: str, output_file: str, sheet_name: str
 
             # Execute the crew
             result = crew.kickoff()
+            
+            # Validate output file was created and contains data
+            if os.path.exists(output_file):
+                try:
+                    # Quick validation of output file
+                    output_wb = openpyxl.load_workbook(output_file, read_only=True)
+                    output_ws = output_wb.active
+                    
+                    # Enhanced validation for selective column extraction
+                    print(f"✅ Output dimensions: {output_ws.max_row} rows x {output_ws.max_column} columns")
+                    
+                    # Validate that we have the expected number of columns (up to 8)
+                    if output_ws.max_column > 8:
+                        print(f"⚠️  Warning: Output has more than 8 columns ({output_ws.max_column}) - expected maximum 8")
+                    elif output_ws.max_column < 1:
+                        print(f"⚠️  Warning: Output has no columns")
+                    else:
+                        print(f"✅ Column count validation: {output_ws.max_column} columns (expected up to 8)")
+                    
+                    # Count data rows (excluding header)
+                    data_rows = max(0, output_ws.max_row - 1) if output_ws.max_row > 1 else 0
+                    print(f"✅ Data rows: {data_rows} (plus 1 header row)")
+                    
+                    # Check if we have headers
+                    if output_ws.max_row >= 1:
+                        header_row = []
+                        for col in range(1, output_ws.max_column + 1):
+                            cell_value = output_ws.cell(row=1, column=col).value
+                            header_row.append(str(cell_value) if cell_value else "")
+                        print(f"✅ Headers found: {', '.join(header_row)}")
+                    
+                    if output_ws.max_row < 2:
+                        print(f"⚠️  Warning: Output has very few rows - may indicate no data extracted")
+                    
+                    output_wb.close()
+                except Exception as e:
+                    print(f"⚠️  Warning: Could not validate output file: {str(e)}")
+            else:
+                print(f"❌ Output file was not created: {output_file}")
+                return False
+            
             print(f"✅ Successfully processed sheet '{sheet_name}'")
             return True
             
