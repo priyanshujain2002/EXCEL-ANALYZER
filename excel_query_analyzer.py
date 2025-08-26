@@ -13,8 +13,76 @@ llm = LLM(
     temperature=0.3,
 )
 
+def extract_placement_names_from_sheet(excel_file: str, sheet_name: str) -> list:
+    """Extract placement names from a specific sheet"""
+    placement_names = []
+    
+    try:
+        # Read the sheet - try different header row positions
+        df = None
+        for header_row in [0, 1, 2]:  # Try different header positions
+            try:
+                temp_df = pd.read_excel(excel_file, sheet_name=sheet_name, header=header_row)
+                # Check if we found a 'Placement Name' column
+                placement_cols = [col for col in temp_df.columns
+                                if 'placement' in str(col).lower() and 'name' in str(col).lower()]
+                if placement_cols:
+                    df = temp_df
+                    break
+            except:
+                continue
+        
+        # If no header found, read without header and look for placement data
+        if df is None:
+            df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None)
+            
+            # Look for the header row
+            header_row_idx = None
+            for idx, row in df.iterrows():
+                row_values = [str(val).lower() for val in row.values if pd.notna(val)]
+                if any('placement' in val and 'name' in val for val in row_values):
+                    header_row_idx = idx
+                    break
+            
+            if header_row_idx is not None:
+                # Re-read with correct header
+                df = pd.read_excel(excel_file, sheet_name=sheet_name, header=header_row_idx)
+        
+        if df is not None:
+            # Find placement name column
+            placement_column = None
+            for col in df.columns:
+                col_str = str(col).lower()
+                if 'placement' in col_str and 'name' in col_str:
+                    placement_column = col
+                    break
+            
+            if placement_column:
+                # Extract placement names
+                placements = df[placement_column].dropna()
+                placements = placements[placements.astype(str).str.strip() != '']
+                placements = placements[placements.astype(str).str.strip().str.lower() != 'nan']
+                
+                # Convert to list and clean up
+                for placement in placements:
+                    placement_str = str(placement).strip()
+                    # Skip if it looks like a header or total row
+                    if (placement_str and
+                        not placement_str.lower().startswith('placement') and
+                        not placement_str.lower().startswith('total') and
+                        len(placement_str) > 3):
+                        placement_names.append(placement_str)
+                
+                # Remove duplicates while preserving order
+                placement_names = list(dict.fromkeys(placement_names))
+                    
+    except Exception as e:
+        print(f"Error extracting placement names from {sheet_name} in {excel_file}: {e}")
+    
+    return placement_names
+
 def analyze_media_plan_structure(excel_files: list):
-    """Analyze the structure of media plan files to identify sheet relationships"""
+    """Analyze the structure of media plan files to identify sheet relationships and extract placement data"""
     media_plan_structure = {}
     
     for excel_file in excel_files:
@@ -33,23 +101,63 @@ def analyze_media_plan_structure(excel_files: list):
                 # High Impact sheets (contain "high impact" in name)
                 if "high impact" in sheet_lower:
                     high_impact_sheets.append(sheet_name)
-                # Combined sheets (contain "+" or "combined" or both budget amounts)
-                elif "+" in sheet_name or "combined" in sheet_lower or ("200k" in sheet_lower and "100k" in sheet_lower):
+                # High Impact sheets (have "+" indicating higher budget - but only if it's clearly higher)
+                elif "+" in sheet_name and re.search(r'\$?\d+k\+', sheet_lower):
+                    high_impact_sheets.append(sheet_name)
+                # Combined sheets (contain "combined" or both budget amounts)
+                elif "combined" in sheet_lower or ("200k" in sheet_lower and "100k" in sheet_lower):
                     combined_sheets.append(sheet_name)
-                # Original plan sheets (contain budget amounts like "200k", "100k" but not high impact)
-                elif re.search(r'\d+k', sheet_lower) and "high impact" not in sheet_lower:
+                # Original plan sheets (contain budget amounts but not "+" or "high impact")
+                elif re.search(r'\$?\d+k', sheet_lower) and "+" not in sheet_name and "high impact" not in sheet_lower:
                     original_sheets.append(sheet_name)
                 # Other sheets that might be original plans
                 else:
                     # If it's not clearly high impact or combined, assume it's original
                     if "summary" not in sheet_lower and "overview" not in sheet_lower:
                         original_sheets.append(sheet_name)
+                        
+            
+            # Extract actual placement names from each sheet type
+            original_placements = []
+            for sheet in original_sheets:
+                placements = extract_placement_names_from_sheet(excel_file, sheet)
+                original_placements.extend(placements)
+            original_placements = list(dict.fromkeys(original_placements))  # Remove duplicates
+            
+            # Extract placements from high impact sheets
+            high_impact_all_placements = []
+            for sheet in high_impact_sheets:
+                placements = extract_placement_names_from_sheet(excel_file, sheet)
+                high_impact_all_placements.extend(placements)
+            high_impact_all_placements = list(dict.fromkeys(high_impact_all_placements))  # Remove duplicates
+            
+            combined_placements = []
+            for sheet in combined_sheets:
+                placements = extract_placement_names_from_sheet(excel_file, sheet)
+                combined_placements.extend(placements)
+            combined_placements = list(dict.fromkeys(combined_placements))  # Remove duplicates
+            
+            # Determine high impact placements based on available sheets
+            high_impact_placements = []
+            original_set = set(original_placements)
+            
+            if high_impact_all_placements:
+                # If we have direct high impact sheets, find placements that are NOT in original
+                high_impact_placements = [p for p in high_impact_all_placements if p not in original_set]
+                
+            elif combined_placements:
+                # If no direct high impact sheets but combined sheets exist,
+                # find placements that are in combined but not in original
+                high_impact_placements = [p for p in combined_placements if p not in original_set]
             
             media_plan_structure[filename] = {
                 'original_sheets': original_sheets,
                 'high_impact_sheets': high_impact_sheets,
                 'combined_sheets': combined_sheets,
-                'all_sheets': xl_file.sheet_names
+                'all_sheets': xl_file.sheet_names,
+                'original_placements': original_placements,
+                'high_impact_placements': high_impact_placements,
+                'combined_placements': combined_placements
             }
             
         except Exception as e:
@@ -58,7 +166,10 @@ def analyze_media_plan_structure(excel_files: list):
                 'original_sheets': [],
                 'high_impact_sheets': [],
                 'combined_sheets': [],
-                'all_sheets': []
+                'all_sheets': [],
+                'original_placements': [],
+                'high_impact_placements': [],
+                'combined_placements': []
             }
     
     return media_plan_structure
@@ -128,28 +239,30 @@ def ask_question(question: str, excel_files: list):
         role='Sheet-Level Package Mapping Specialist',
         goal='Analyze and map packages between original and high impact sheets within each media plan file',
         backstory=f"""You are a package analysis expert specializing in mapping and comparing packages
-        between different sheets within the same media plan file. You excel at:
+        between different sheets within the same media plan file. You have access to pre-extracted placement data:
+        
+        **PRE-EXTRACTED PLACEMENT DATA AVAILABLE:**
+        {media_plan_structure}
+        
+        **PLACEMENT NAME IS THE MOST IMPORTANT ELEMENT** - Focus entirely on placement names for all analysis.
         
         PLACEMENT NAME COMPARISON EXPERTISE (MOST CRITICAL):
         - **PLACEMENT NAME IS THE MOST IMPORTANT COLUMN** - this is your primary focus for all analysis
         - CORE COMPARISON LOGIC: Compare placement names between sheets to identify high impact placements:
           * If original + high impact sheets exist → Map the original placement names to high impact placement names that for this original plan, this will be the high impact plan.
           * If only original + combined sheets exist → find placement names in combined sheet that are NOT in original sheet (these are high impact)
-        - Somethimes the combined sheet will contain all the same placement names as in original sheet but they will increase the net cost of placements in it.
+        - Sometimes the combined sheet will contain all the same placement names as in original sheet but they will increase the net cost of placements in it.
         - Understanding that high impact packages are upselling opportunities beyond client budget
         - Mapping relationships using placement name as the definitive identifier
         - Identifying which placement names are exclusive to high impact plans through name comparison
         - Analyzing package variations for matching placement names across sheet types
-        
-        MEDIA PLAN STRUCTURE:
-        {media_plan_structure}
         
         You understand that each Excel file is a complete media plan containing:
         - Original Plan sheets (client's budget packages), always present.
         - High Impact Plan sheets (upselling packages)
         - Sometimes combined sheets showing both together
         
-        **YOUR PRIMARY FOCUS IS PLACEMENT NAME COMPARISON** to identify which placement names are extra in combined plans compared to original plans, as these represent the high impact upselling opportunities.""",
+        **USE THE PRE-EXTRACTED PLACEMENT DATA** from the media plan structure to provide accurate placement name lists and analysis.""",
         knowledge_sources=excel_sources,
         embedder=embedder_config,
         llm=llm,
@@ -161,7 +274,13 @@ def ask_question(question: str, excel_files: list):
         role='Multi-Sheet Media Plan Data Analyst',
         goal='Perform detailed analysis across multiple sheets within media plan files and extract comparative insights',
         backstory=f"""You are an expert data analyst specializing in multi-sheet media plan Excel data analysis.
-        You can analyze data patterns, trends, and provide detailed insights about:
+        
+        **MANDATORY DATA EXTRACTION REQUIREMENTS:**
+        - **YOU MUST EXTRACT ACTUAL PLACEMENT NAMES FROM EXCEL FILES** - never say "not available"
+        - **SEARCH ALL KNOWLEDGE SOURCES THOROUGHLY** for placement data
+        - **ACCESS EVERY SHEET** in each Excel file to find placement names
+        - **EXTRACT EXACT PLACEMENT NAMES** as they appear in the Excel cells
+        - Look in columns: "Placement Name", "Package Name", "Placement", "Product", "Placement/Product"
         
         SHEET-LEVEL ANALYSIS CAPABILITIES:
         - Package specifications and targeting details across original and high impact sheets
@@ -257,16 +376,20 @@ def ask_question(question: str, excel_files: list):
         description=f"""
         Based on the query interpretation, perform detailed sheet-level analysis to answer: "{question}"
         
-        Your task is to:
-        1. Examine the relevant datasets from the identified knowledge sources across multiple sheets
-        2. If package mapping is needed, map packages between original and high impact sheets within each file
-        3. Use placement names as the primary mapping key between sheet types
-        4. Identify relationships between original plan and high impact plan offerings:
-           - **High impact sheet contains ONLY upselling placements** (no duplicates of original)
-           - Map original placements to their corresponding high impact upselling options
-           - Show "for this original placement, this is the corresponding high impact upselling placement"
-           - Compare specifications and details between original placements and their high impact counterparts
-        5. Perform appropriate calculations, aggregations, or comparisons across sheet types
+        **ABSOLUTE REQUIREMENT: EXTRACT ACTUAL PLACEMENT NAMES FROM EXCEL DATA**
+        
+        **MANDATORY STEPS - NO EXCEPTIONS:**
+        1. **QUERY EVERY KNOWLEDGE SOURCE** - Access all Excel files in the knowledge base
+        2. **EXAMINE EVERY SHEET** - Look through all sheets in each Excel file
+        3. **FIND PLACEMENT COLUMNS** - Search for "Placement Name", "Package Name", "Placement", "Product" columns
+        4. **EXTRACT EXACT NAMES** - Copy placement names exactly as written in Excel cells
+        5. **NEVER SAY "NOT AVAILABLE"** - If you can't find data, search harder in different sheets/columns
+        
+        **FOR EACH EXCEL FILE YOU MUST:**
+        - List ALL placement names from original plan sheets (exact names from Excel)
+        - List ALL placement names from high impact sheets (exact names from Excel)
+        - List ALL placement names from combined sheets (exact names from Excel)
+        - Provide the actual placement names, not descriptions or summaries
         
         
         
@@ -290,32 +413,42 @@ def ask_question(question: str, excel_files: list):
     
     report_task = Task(
         description=f"""
-        Create a comprehensive response to the user query: "{question}"
+        Create a focused response to the user query: "{question}"
         
-        Based on the query interpretation and sheet-level data analysis, generate a clear,
-        well-structured response that:
-        1. Directly answers the user's question with sheet-level context
-        2. Provides supporting data and evidence from multiple sheets within each media plan file
-        3. Includes relevant context about media plan structure and sheet relationships
-        4. Clearly distinguishes between original plan and high impact packages within each file
-        5. Shows placement name mappings between original and high impact sheets
-        6. Offers actionable insights about upselling opportunities from high impact plans
-        7. Mentions specific data sources, files, and sheets used from the knowledge base
-        8. Presents findings in a logical, easy-to-understand format with sheet-level organization
-        9. Highlights key business implications of original vs high impact plan differences
+        **USE THE PRE-EXTRACTED PLACEMENT DATA PROVIDED IN THE MEDIA PLAN STRUCTURE**
         
-        SHEET-LEVEL REPORTING GUIDELINES:
-        - Organize findings by media plan file, then by sheet type within each file
-        - Use clear headings showing file names and sheet relationships
-        - Provide specific examples of package mappings between sheets
-        - Explain the significance of high impact plan differences
-        - Include comparative analysis between original and high impact offerings
-        - Highlight upselling opportunities and business value
+        **For EACH media plan file separately, provide ONLY the following three things:**
         
-        MEDIA PLAN CONTEXT FOR REPORTING:
+        For each Excel file in the knowledge base:
+        1. **List of all placement names in original plan sheets** - Use the 'original_placements' data from media plan structure
+        2. **List of all placement names in high impact plan sheets** - Use the 'high_impact_placements' data from media plan structure
+        3. **Reasoning of why this particular plan is high impact plan** - Provide business reasoning based on the placement differences and targeting strategies
+        
+        **STRICT OUTPUT FORMAT FOR EACH FILE:**
+        
+        # [FILENAME]
+        
+        ## 1. Original Plan Placement Names:
+        [List all placements from 'original_placements' in the media plan structure]
+        
+        ## 2. High Impact Plan Placement Names:
+        [List all placements from 'high_impact_placements' in the media plan structure]
+        
+        ## 3. Why These Are High Impact Plans:
+        [Provide strategic business reasoning for why these high impact placements represent upselling opportunities - analyze the nature of the placements, targeting improvements, premium positioning, enhanced reach, etc.]
+        
+        ---
+        
+        **MEDIA PLAN STRUCTURE WITH PRE-EXTRACTED DATA:**
         {media_plan_structure}
+        
+        **REASONING GUIDELINES:**
+        - Analyze the high impact placements to understand what makes them premium (enhanced targeting, premium time slots, roadblocks, immersive formats, etc.)
+        - Explain how these placements go beyond the client's original budget to provide additional value
+        - Focus on business benefits like increased reach, better targeting, premium positioning, enhanced engagement
+        - Consider factors like exclusivity, prime time slots, special formats, or enhanced targeting capabilities
         """,
-        expected_output="A clear, comprehensive response to the user query with supporting sheet-level analysis, package mappings, and actionable insights about original vs high impact plan relationships",
+        expected_output="For each media plan file separately: 1) Exact placement names from original sheets only, 2) Exact placement names from high impact sheets only, 3) Reasoning for high impact classification - with no cross-contamination between lists",
         agent=report_generator
     )
 
