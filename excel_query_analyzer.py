@@ -14,20 +14,28 @@ llm = LLM(
 )
 
 def extract_placement_names_from_sheet(excel_file: str, sheet_name: str) -> list:
-    """Extract placement names from a specific sheet"""
+    """Extract placement names from a specific sheet with enhanced placement column detection"""
     placement_names = []
+    
+    # Define package-specific column patterns - ONLY Package Name
+    placement_column_patterns = [
+        ['package', 'name'],             # "Package Name" - ONLY this pattern
+    ]
     
     try:
         # Read the sheet - try different header row positions
         df = None
+        placement_column = None
+        
         for header_row in [0, 1, 2]:  # Try different header positions
             try:
                 temp_df = pd.read_excel(excel_file, sheet_name=sheet_name, header=header_row)
-                # Check if we found a 'Placement Name' column
-                placement_cols = [col for col in temp_df.columns
-                                if 'placement' in str(col).lower() and 'name' in str(col).lower()]
-                if placement_cols:
+                
+                # Find placement column using enhanced patterns
+                found_column = find_placement_column(temp_df.columns, placement_column_patterns)
+                if found_column:
                     df = temp_df
+                    placement_column = found_column
                     break
             except:
                 continue
@@ -36,50 +44,92 @@ def extract_placement_names_from_sheet(excel_file: str, sheet_name: str) -> list
         if df is None:
             df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None)
             
-            # Look for the header row
+            # Look for the header row using placement patterns
             header_row_idx = None
             for idx, row in df.iterrows():
                 row_values = [str(val).lower() for val in row.values if pd.notna(val)]
-                if any('placement' in val and 'name' in val for val in row_values):
+                if find_placement_column_in_values(row_values, placement_column_patterns):
                     header_row_idx = idx
                     break
             
             if header_row_idx is not None:
                 # Re-read with correct header
                 df = pd.read_excel(excel_file, sheet_name=sheet_name, header=header_row_idx)
+                placement_column = find_placement_column(df.columns, placement_column_patterns)
         
-        if df is not None:
-            # Find placement name column
-            placement_column = None
-            for col in df.columns:
-                col_str = str(col).lower()
-                if 'placement' in col_str and 'name' in col_str:
-                    placement_column = col
-                    break
+        if df is not None and placement_column:
+            # Extract placement names
+            placements = df[placement_column].dropna()
+            placements = placements[placements.astype(str).str.strip() != '']
+            placements = placements[placements.astype(str).str.strip().str.lower() != 'nan']
             
-            if placement_column:
-                # Extract placement names
-                placements = df[placement_column].dropna()
-                placements = placements[placements.astype(str).str.strip() != '']
-                placements = placements[placements.astype(str).str.strip().str.lower() != 'nan']
-                
-                # Convert to list and clean up
-                for placement in placements:
-                    placement_str = str(placement).strip()
-                    # Skip if it looks like a header or total row
-                    if (placement_str and
-                        not placement_str.lower().startswith('placement') and
-                        not placement_str.lower().startswith('total') and
-                        len(placement_str) > 3):
-                        placement_names.append(placement_str)
-                
-                # Remove duplicates while preserving order
-                placement_names = list(dict.fromkeys(placement_names))
+            # Convert to list and clean up
+            for placement in placements:
+                placement_str = str(placement).strip()
+                # Skip if it looks like a header or total row
+                if (placement_str and
+                    not is_header_like(placement_str) and
+                    len(placement_str) >= 3):
+                    placement_names.append(placement_str)
+            
+            # Remove duplicates while preserving order
+            placement_names = list(dict.fromkeys(placement_names))
                     
     except Exception as e:
         print(f"Error extracting placement names from {sheet_name} in {excel_file}: {e}")
     
     return placement_names
+
+def find_placement_column(columns, patterns):
+    """Find the best matching placement column using pattern priority"""
+    for pattern in patterns:
+        for col in columns:
+            col_str = str(col).lower().strip()
+            # Now we WANT package columns specifically
+            # Check if all keywords in pattern are present in column name
+            if all(keyword in col_str for keyword in pattern):
+                return col
+    return None
+
+def find_placement_column_in_values(values, patterns):
+    """Find placement column patterns in row values"""
+    for pattern in patterns:
+        for val in values:
+            val_str = str(val).lower().strip()
+            # Now we WANT package values specifically
+            # Check if all keywords in pattern are present in value
+            if all(keyword in val_str for keyword in pattern):
+                return True
+    return False
+
+def is_header_like(text):
+    """Check if text looks like a header or system row"""
+    text_lower = text.lower().strip()
+    
+    # Exact header matches (these are definitely headers)
+    exact_headers = [
+        'placement name', 'package name', 'placement', 'name', 'total', 'sum',
+        'header', 'title', 'description', 'unnamed:', 'column'
+    ]
+    
+    # If text exactly matches header indicators, it's a header
+    if text_lower in exact_headers:
+        return True
+    
+    # If text is very short (but allow valid 3-letter packages like CTV) or contains only special characters
+    stripped_text = text.strip()
+    if len(stripped_text) <= 2 or stripped_text in ['', '-', '_', '=', '+']:
+        return True
+    
+    # Special case: if it's exactly 3 characters and all uppercase, it might be a valid package (like CTV)
+    if len(stripped_text) == 3 and stripped_text.isupper() and stripped_text.isalpha():
+        return False  # Don't filter out 3-letter uppercase packages
+    
+    # If text starts with "placement name" or "package name" (common headers)
+    if text_lower.startswith('placement name') or text_lower.startswith('package name'):
+        return True
+        
+    return False
 
 def analyze_media_plan_structure(excel_files: list):
     """Analyze the structure of media plan files to identify sheet relationships and extract placement data"""
@@ -435,7 +485,7 @@ def ask_question(question: str, excel_files: list):
         [List all placements from 'high_impact_placements' in the media plan structure]
         
         ## 3. Why These Are High Impact Plans:
-        [Provide strategic business reasoning for why these high impact placements represent upselling opportunities - analyze the nature of the placements, targeting improvements, premium positioning, enhanced reach, etc.]
+        [Provide ONE brief sentence explaining the key differentiator that makes these high impact placements premium upselling opportunities]
         
         ---
         
@@ -443,10 +493,9 @@ def ask_question(question: str, excel_files: list):
         {media_plan_structure}
         
         **REASONING GUIDELINES:**
-        - Analyze the high impact placements to understand what makes them premium (enhanced targeting, premium time slots, roadblocks, immersive formats, etc.)
-        - Explain how these placements go beyond the client's original budget to provide additional value
-        - Focus on business benefits like increased reach, better targeting, premium positioning, enhanced engagement
-        - Consider factors like exclusivity, prime time slots, special formats, or enhanced targeting capabilities
+        - Provide ONE concise sentence explaining why these are high impact placements
+        - Focus on the key differentiator (roadblock, enhanced targeting, premium format, etc.)
+        - Keep reasoning under 20 words maximum
         """,
         expected_output="For each media plan file separately: 1) Exact placement names from original sheets only, 2) Exact placement names from high impact sheets only, 3) Reasoning for high impact classification - with no cross-contamination between lists",
         agent=report_generator
