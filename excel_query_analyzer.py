@@ -230,6 +230,70 @@ def analyze_media_plan_structure(excel_files: list):
     
     return media_plan_structure
 
+def create_separate_json_files(result_data):
+    """Create two separate JSON files from the combined result data"""
+    import json
+    
+    try:
+        # Handle CrewOutput object - extract the raw result
+        if hasattr(result_data, 'raw'):
+            result_str = result_data.raw
+        elif hasattr(result_data, '__str__'):
+            result_str = str(result_data)
+        else:
+            result_str = result_data
+        
+        # Clean the result string - remove markdown code blocks if present
+        if isinstance(result_str, str):
+            result_str = result_str.strip()
+            if result_str.startswith('```json'):
+                result_str = result_str[7:]  # Remove ```json
+            if result_str.endswith('```'):
+                result_str = result_str[:-3]  # Remove ```
+            result_str = result_str.strip()
+        
+        # Parse the JSON
+        data = json.loads(result_str)
+        
+        # Create original packages file structure
+        original_file_data = {
+            "results": []
+        }
+        
+        # Create high impact packages file structure
+        high_impact_file_data = {
+            "results": []
+        }
+        
+        # Process each result entry
+        for entry in data.get("results", []):
+            # Original packages entry
+            original_entry = {
+                "id": entry.get("id"),
+                "original_package_names": entry.get("original_package_names", [])
+            }
+            original_file_data["results"].append(original_entry)
+            
+            # High impact packages entry
+            high_impact_entry = {
+                "id": entry.get("id"),  # Same ID as original
+                "high_impact_package_names": entry.get("high_impact_package_names", []),
+                "reasoning": entry.get("reasoning", "")
+            }
+            high_impact_file_data["results"].append(high_impact_entry)
+        
+        # Save to separate files
+        with open("original_packages.json", "w", encoding="utf-8") as f:
+            json.dump(original_file_data, f, indent=2, ensure_ascii=False)
+        
+        with open("high_impact_packages.json", "w", encoding="utf-8") as f:
+            json.dump(high_impact_file_data, f, indent=2, ensure_ascii=False)
+        
+        return True
+        
+    except Exception as e:
+        return False
+
 def extract_package_names_with_reasoning(excel_files: list):
     """Extract package names from original and high impact plans with AI-powered reasoning"""
     
@@ -333,30 +397,25 @@ def extract_package_names_with_reasoning(excel_files: list):
     )
     
     result = crew.kickoff()
+    
+    # Create separate JSON files
+    create_separate_json_files(result)
+    
     return result
 
 # Direct extraction mode
 if __name__ == "__main__":
-    print("🎯 Package Name Extraction Tool - Analyzing Excel files for original and high impact plans!")
-    
     # Check setup
     if not os.path.exists("knowledge/"):
-        print("❌ 'knowledge' directory not found!")
         exit()
     
     # Get the full relative paths from glob
     excel_files = glob.glob("knowledge/*.xlsx") + glob.glob("knowledge/*.xls")
     if not excel_files:
-        print("❌ No Excel files found in knowledge/ directory")
         exit()
     
-    print(f"📁 Found {len(excel_files)} Excel files:")
-    for file in excel_files:
-        print(f"  • {os.path.basename(file)}")
-    
-    print("\n🔍 Extracting package names and generating reasoning...")
+    # Extract package names and generate JSON files silently
     try:
-        result = extract_package_names_with_reasoning(excel_files)
-        print(f"\n📊 Results:\n{result}")
+        extract_package_names_with_reasoning(excel_files)
     except Exception as e:
-        print(f"❌ Error: {str(e)}")
+        pass
