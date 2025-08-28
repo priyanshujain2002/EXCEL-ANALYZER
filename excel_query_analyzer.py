@@ -66,9 +66,10 @@ def extract_placement_names_from_sheet(excel_file: str, sheet_name: str) -> list
             # Convert to list and clean up
             for placement in placements:
                 placement_str = str(placement).strip()
-                # Skip if it looks like a header or total row
+                # Skip if it looks like a header, total row, or contains "added value"
                 if (placement_str and
                     not is_header_like(placement_str) and
+                    not has_added_value(placement_str) and
                     len(placement_str) >= 3):
                     placement_names.append(placement_str)
             
@@ -101,6 +102,11 @@ def find_placement_column_in_values(values, patterns):
             if all(keyword in val_str for keyword in pattern):
                 return True
     return False
+
+def has_added_value(text):
+    """Check if text contains 'added value' and should be filtered out"""
+    text_lower = text.lower().strip()
+    return 'added value' in text_lower
 
 def is_header_like(text):
     """Check if text looks like a header or system row"""
@@ -224,8 +230,8 @@ def analyze_media_plan_structure(excel_files: list):
     
     return media_plan_structure
 
-def ask_question(question: str, excel_files: list):
-    """Answer user's question about media plans with sheet-level awareness"""
+def extract_package_names_with_reasoning(excel_files: list):
+    """Extract package names from original and high impact plans with AI-powered reasoning"""
     
     # Analyze media plan structure first
     media_plan_structure = analyze_media_plan_structure(excel_files)
@@ -234,17 +240,14 @@ def ask_question(question: str, excel_files: list):
     embedder_config = {
         "provider": "bedrock",
         "config": {
-            "model": "amazon.titan-embed-text-v1",  # or your preferred embedding model
-            "session": session  # Uses default AWS session
+            "model": "amazon.titan-embed-text-v1",
+            "session": session
         }
     }
     
-    # Create Excel knowledge sources for all files in knowledge directory
-    # Since ExcelKnowledgeSource searches under knowledge directory automatically,
-    # we only need the filenames without the "knowledge/" prefix
+    # Create Excel knowledge sources
     excel_sources = []
     for excel_file in excel_files:
-        # Extract just the filename (remove "knowledge/" prefix)
         filename = os.path.basename(excel_file)
         excel_source = ExcelKnowledgeSource(
             file_paths=[filename],
@@ -252,268 +255,89 @@ def ask_question(question: str, excel_files: list):
         )
         excel_sources.append(excel_source)
     
-    # Create specialized agents with enhanced sheet-level awareness
-    query_interpreter = Agent(
-        role='Media Plan Query Interpreter',
-        goal='Understand user queries and identify relevant data sources and sheet-level analysis requirements',
-        backstory=f"""You are a query interpretation specialist who understands natural language
-        questions about media plans and advertising packages. You excel at breaking down complex
-        questions into specific data requirements and identifying which Excel files, sheets, and columns
-        are most relevant for answering user questions. 
+    # Create single reasoning agent
+    reasoning_agent = Agent(
+        role='Package Analysis and Reasoning Specialist',
+        goal='Extract package names and provide intelligent reasoning for high impact classifications',
+        backstory=f"""You are a media planning expert who analyzes placement data and provides
+        strategic reasoning for why certain packages are classified as high impact upselling opportunities.
         
-        MEDIA PLAN STRUCTURE KNOWLEDGE:
+        **PRE-EXTRACTED PLACEMENT DATA:**
         {media_plan_structure}
         
-        You understand that:
-        - Each Excel file represents a unique media plan with multiple sheets
-        - Original Plan sheets contain packages within the client's budget
-        - High Impact Plan sheets contain upselling packages beyond the client's budget
-        - Combined sheets show both original and high impact packages together
-        - Somethimes the combined sheet will contain all the same placement names as in original sheet but they will increase the net cost of placements in it.
-        - **PLACEMENT NAME IS THE MOST IMPORTANT COLUMN** - this is the primary key for all comparisons
-        - CRITICAL LOGIC: Understand high impact sheet structure and mapping:
-          * If original + high impact sheets exist → high impact sheet contains ONLY upselling placements, map these to show "for this original plan, this is the corresponding high impact upselling plan"
-          * If only original + combined sheets exist → high impact placements = placement names in combined sheet that are NOT in original sheet
-        - You need to map original plans with their corresponding high impact plans within the same file using placement name comparison
+        **YOUR TASK:**
+        For each media plan file, you must:
+        1. List exact placement names from original plans
+        2. List exact placement names from high impact plans
+        3. Provide intelligent business reasoning for why the high impact placements are premium upselling opportunities
         
-        You understand media planning terminology, package structures, and can distinguish between 
-        different types of analysis needed (comparisons, summaries, calculations, etc.).""",
-        knowledge_sources=excel_sources,
-        embedder=embedder_config,
-        llm=llm,
-        verbose=True,
-        allow_delegation=False
-    )
-
-    package_analyzer = Agent(
-        role='Sheet-Level Package Mapping Specialist',
-        goal='Analyze and map packages between original and high impact sheets within each media plan file',
-        backstory=f"""You are a package analysis expert specializing in mapping and comparing packages
-        between different sheets within the same media plan file. You have access to pre-extracted placement data:
-        
-        **PRE-EXTRACTED PLACEMENT DATA AVAILABLE:**
-        {media_plan_structure}
-        
-        **PLACEMENT NAME IS THE MOST IMPORTANT ELEMENT** - Focus entirely on placement names for all analysis.
-        
-        PLACEMENT NAME COMPARISON EXPERTISE (MOST CRITICAL):
-        - **PLACEMENT NAME IS THE MOST IMPORTANT COLUMN** - this is your primary focus for all analysis
-        - CORE COMPARISON LOGIC: Compare placement names between sheets to identify high impact placements:
-          * If original + high impact sheets exist → Map the original placement names to high impact placement names that for this original plan, this will be the high impact plan.
-          * If only original + combined sheets exist → find placement names in combined sheet that are NOT in original sheet (these are high impact)
-        - Sometimes the combined sheet will contain all the same placement names as in original sheet but they will increase the net cost of placements in it.
-        - Understanding that high impact packages are upselling opportunities beyond client budget
-        - Mapping relationships using placement name as the definitive identifier
-        - Identifying which placement names are exclusive to high impact plans through name comparison
-        - Analyzing package variations for matching placement names across sheet types
-        
-        You understand that each Excel file is a complete media plan containing:
-        - Original Plan sheets (client's budget packages), always present.
-        - High Impact Plan sheets (upselling packages)
-        - Sometimes combined sheets showing both together
-        
-        **USE THE PRE-EXTRACTED PLACEMENT DATA** from the media plan structure to provide accurate placement name lists and analysis.""",
-        knowledge_sources=excel_sources,
-        embedder=embedder_config,
-        llm=llm,
-        verbose=True,
-        allow_delegation=False
-    )
-
-    data_analyst = Agent(
-        role='Multi-Sheet Media Plan Data Analyst',
-        goal='Perform detailed analysis across multiple sheets within media plan files and extract comparative insights',
-        backstory=f"""You are an expert data analyst specializing in multi-sheet media plan Excel data analysis.
-        
-        **MANDATORY DATA EXTRACTION REQUIREMENTS:**
-        - **YOU MUST EXTRACT ACTUAL PLACEMENT NAMES FROM EXCEL FILES** - never say "not available"
-        - **SEARCH ALL KNOWLEDGE SOURCES THOROUGHLY** for placement data
-        - **ACCESS EVERY SHEET** in each Excel file to find placement names
-        - **EXTRACT EXACT PLACEMENT NAMES** as they appear in the Excel cells
-        - Look in columns: "Placement Name", "Package Name", "Placement", "Product", "Placement/Product"
-        
-        SHEET-LEVEL ANALYSIS CAPABILITIES:
-        - Package specifications and targeting details across original and high impact sheets
-        - Budget allocations and cost analysis comparing original vs high impact plans
-        - Media plan metrics and performance indicators by sheet type
-        - Display and video specifications variations between plan types
-        - Availability and targeting summaries across different sheets
-        - Placement name mapping and package relationship analysis
-        
-        MEDIA PLAN STRUCTURE AWARENESS:
-        {media_plan_structure}
-        
-        You understand that:
-        - Each file contains multiple related sheets (original, high impact, combined)
-        - Original plans represent client's budget constraints
-        - **High impact sheets contain ONLY upselling placements** (no duplicates of original)
-        - **PLACEMENT NAMES ARE THE MOST CRITICAL COLUMN** for mapping between sheets
-        - CORE MAPPING LOGIC: Map original placements to their corresponding high impact upselling placements to show "for this original placement, this is the high impact upselling option"
-        - Analysis should focus on placement name relationships within each file
-        
-        You excel at placement name mapping analysis within individual media plan files and can identify how original placements relate to their high impact upselling counterparts.""",
-        knowledge_sources=excel_sources,
-        embedder=embedder_config,
-        llm=llm,
-        verbose=True,
-        allow_delegation=False
-    )
-
-    report_generator = Agent(
-        role='Multi-Plan Report Generator',
-        goal='Generate comprehensive reports showing relationships between original and high impact plans across all media plan files',
-        backstory=f"""You are a report generation specialist who creates clear, well-structured
-        reports from multi-sheet media plan data analysis results. You excel at presenting complex 
-        sheet-level relationships and package mappings in an understandable format.
-        
-        REPORTING SPECIALIZATIONS:
-        - Synthesize findings from multiple sheets within each media plan file
-        - Create executive summaries showing original vs high impact plan differences
-        - Provide strategic recommendations based on placement name mapping analysis
-        - Present comparative analysis results clearly across sheet types
-        - Highlight upselling opportunities from high impact plans
-        - Show package relationships and mapping within each media plan file
-        
-        MEDIA PLAN STRUCTURE CONTEXT:
-        {media_plan_structure}
-        
-        You understand the business context:
-        - Original plans align with client budgets and requirements
-        - High impact plans are upselling opportunities beyond client budget
-        - Each file represents a complete media plan with related sheets
-        - Placement names are the primary key for mapping relationships
-        
-        Your reports help stakeholders understand upselling opportunities and make informed 
-        decisions about media planning strategies across original and high impact offerings.""",
-        knowledge_sources=excel_sources,
-        embedder=embedder_config,
-        llm=llm,
-        verbose=True,
-        allow_delegation=False
-    )
-
-    # Create specialized tasks with sheet-level awareness
-    interpret_task = Task(
-        description=f"""
-        Analyze the user query: "{question}"
-        
-        Your task is to:
-        1. Understand what the user is asking for in the context of multi-sheet media plans
-        2. Identify which Excel files and specific sheets are most relevant
-        3. Determine if the query requires sheet-level mapping within files
-        4. Identify if placement/package name mapping is needed between original and high impact sheets
-        5. Provide clear guidance on the sheet-level analysis approach needed
-        6. Specify which columns and data points should be examined across different sheet types
-        
-        MULTI-SHEET MEDIA PLAN CONTEXT:
-        - Each Excel file is a unique media plan with multiple related sheets
-        - Original Plan sheets: Packages within client's budget
-        - High Impact Plan sheets: Upselling packages beyond client's budget  
-        - Combined sheets: Both original and high impact packages together
-        - Somethimes the combined sheet will contain all the same placement names as in original sheet but they will increase the net cost of placements in it.
-        - Placement Name is the primary mapping key between sheets
-        
-        AVAILABLE MEDIA PLAN STRUCTURE:
-        {media_plan_structure}
-        
-        Use the available knowledge sources to understand the data structure and content across all sheets.
+        **REASONING EXPERTISE:**
+        - Analyze placement characteristics (targeting, format, positioning)
+        - Identify premium features that justify higher costs
+        - Understand media planning strategy and upselling logic
+        - Provide concise, actionable business insights
         """,
-        expected_output="Clear interpretation of the user query with specific sheet-level analysis recommendations and relevant data sources identified",
-        agent=query_interpreter
+        knowledge_sources=excel_sources,
+        embedder=embedder_config,
+        llm=llm,
+        verbose=True,
+        allow_delegation=False
     )
     
-    analyze_task = Task(
+    # Create single task for extraction and reasoning
+    extraction_task = Task(
         description=f"""
-        Based on the query interpretation, perform detailed sheet-level analysis to answer: "{question}"
+        Extract package names and provide reasoning for each media plan file in JSON format.
         
-        **ABSOLUTE REQUIREMENT: EXTRACT ACTUAL PLACEMENT NAMES FROM EXCEL DATA**
+        **REQUIRED JSON OUTPUT FORMAT:**
         
-        **MANDATORY STEPS - NO EXCEPTIONS:**
-        1. **QUERY EVERY KNOWLEDGE SOURCE** - Access all Excel files in the knowledge base
-        2. **EXAMINE EVERY SHEET** - Look through all sheets in each Excel file
-        3. **FIND PLACEMENT COLUMNS** - Search for "Placement Name", "Package Name", "Placement", "Product" columns
-        4. **EXTRACT EXACT NAMES** - Copy placement names exactly as written in Excel cells
-        5. **NEVER SAY "NOT AVAILABLE"** - If you can't find data, search harder in different sheets/columns
+        {{
+            "results": [
+                {{
+                    "id": 1,
+                    "filename": "Excel filename",
+                    "original_package_names": ["list", "of", "original", "placement", "names"],
+                    "high_impact_package_names": ["list", "of", "high", "impact", "placement", "names"],
+                    "reasoning": "One sentence explaining why the high impact packages are premium upselling opportunities"
+                }},
+                {{
+                    "id": 2,
+                    "filename": "Next Excel filename",
+                    "original_package_names": ["original", "placements", "from", "this", "file"],
+                    "high_impact_package_names": ["high", "impact", "placements", "from", "this", "file"],
+                    "reasoning": "One sentence reasoning for this file's high impact classification"
+                }}
+            ]
+        }}
         
-        **FOR EACH EXCEL FILE YOU MUST:**
-        - List ALL placement names from original plan sheets (exact names from Excel)
-        - List ALL placement names from high impact sheets (exact names from Excel)
-        - List ALL placement names from combined sheets (exact names from Excel)
-        - Provide the actual placement names, not descriptions or summaries
-        
-        
-        
-        SHEET MAPPING STRATEGY:
-        1. Always prioritize "Placement Name" columns for mapping
-        2. If original plan and high impact sheets are available then directly map the original sheet's placement with te high impact
-        placement, that for this plan this will be the high impact plan.
-        3. If original and combined sheets are available then compare the placement names of both sheets and the placement names present
-        only in the combined sheets are the high imapct packages, map them to the original plan.
-        4. Somethimes the combined sheet will contain all the same placement names as in original sheet but they will increase the net 
-        cost of placements in it.
-        
-        MEDIA PLAN STRUCTURE TO ANALYZE:
+        **MEDIA PLAN STRUCTURE DATA:**
         {media_plan_structure}
         
-        Use the knowledge sources to access the actual data for comprehensive sheet-level analysis.
+        **EXTRACTION REQUIREMENTS:**
+        - Create one entry per Excel file with sequential ID numbers starting from 1
+        - Use exact placement names from 'original_placements' and 'high_impact_placements' arrays
+        - Include complete lists of all package names for each file
+        - Provide EXACTLY ONE SENTENCE reasoning (maximum 25 words) per file
+        - Focus on key differentiators (enhanced targeting, premium formats, better positioning, etc.)
+        - Output ONLY valid JSON format - no additional text or explanations
         """,
-        expected_output="Detailed sheet-level data analysis results with specific findings, package mappings between original and high impact sheets, and insights",
-        agent=package_analyzer if "package" in question.lower() or "compare" in question.lower() or "map" in question.lower() else data_analyst
+        expected_output="Valid JSON object with results array containing id, filename, original_package_names array, high_impact_package_names array, and reasoning for each Excel file",
+        agent=reasoning_agent
     )
     
-    report_task = Task(
-        description=f"""
-        Create a focused response to the user query: "{question}"
-        
-        **USE THE PRE-EXTRACTED PLACEMENT DATA PROVIDED IN THE MEDIA PLAN STRUCTURE**
-        
-        **For EACH media plan file separately, provide ONLY the following three things:**
-        
-        For each Excel file in the knowledge base:
-        1. **List of all placement names in original plan sheets** - Use the 'original_placements' data from media plan structure
-        2. **List of all placement names in high impact plan sheets** - Use the 'high_impact_placements' data from media plan structure
-        3. **Reasoning of why this particular plan is high impact plan** - Provide business reasoning based on the placement differences and targeting strategies
-        
-        **STRICT OUTPUT FORMAT FOR EACH FILE:**
-        
-        # [FILENAME]
-        
-        ## 1. Original Plan Placement Names:
-        [List all placements from 'original_placements' in the media plan structure]
-        
-        ## 2. High Impact Plan Placement Names:
-        [List all placements from 'high_impact_placements' in the media plan structure]
-        
-        ## 3. Why These Are High Impact Plans:
-        [Provide ONE brief sentence explaining the key differentiator that makes these high impact placements premium upselling opportunities]
-        
-        ---
-        
-        **MEDIA PLAN STRUCTURE WITH PRE-EXTRACTED DATA:**
-        {media_plan_structure}
-        
-        **REASONING GUIDELINES:**
-        - Provide ONE concise sentence explaining why these are high impact placements
-        - Focus on the key differentiator (roadblock, enhanced targeting, premium format, etc.)
-        - Keep reasoning under 20 words maximum
-        """,
-        expected_output="For each media plan file separately: 1) Exact placement names from original sheets only, 2) Exact placement names from high impact sheets only, 3) Reasoning for high impact classification - with no cross-contamination between lists",
-        agent=report_generator
-    )
-
-    # Create and run Crew with multiple agents and tasks
+    # Create and run simplified Crew
     crew = Crew(
-        agents=[query_interpreter, package_analyzer, data_analyst, report_generator],
-        tasks=[interpret_task, analyze_task, report_task],
+        agents=[reasoning_agent],
+        tasks=[extraction_task],
         verbose=True
     )
     
     result = crew.kickoff()
     return result
 
-# Interactive mode
+# Direct extraction mode
 if __name__ == "__main__":
-    print("🎯 Multi-Sheet Media Plan Agent - Ask questions about your Excel files!")
+    print("🎯 Package Name Extraction Tool - Analyzing Excel files for original and high impact plans!")
     
     # Check setup
     if not os.path.exists("knowledge/"):
@@ -526,29 +350,13 @@ if __name__ == "__main__":
         print("❌ No Excel files found in knowledge/ directory")
         exit()
     
-    print(f"📁 Available Excel files:")
+    print(f"📁 Found {len(excel_files)} Excel files:")
     for file in excel_files:
         print(f"  • {os.path.basename(file)}")
     
-
-    
-    print("\n💬 Ask your questions (type 'quit' to exit):")
-    print("\n🧪 SHEET-LEVEL MAPPING TEST QUESTIONS:")
-   
-    print("Map the relationship between original and high impact packages using placement names")
-   
-    
-    while True:
-        question = input("\n> ").strip()
-        
-        if question.lower() in ['quit', 'exit']:
-            print("👋 Goodbye!")
-            break
-            
-        if question:
-            print("\n🔍 Analyzing across multiple sheets...")
-            try:
-                result = ask_question(question, excel_files)
-                print(f"\n📊 Answer:\n{result}")
-            except Exception as e:
-                print(f"❌ Error: {str(e)}")
+    print("\n🔍 Extracting package names and generating reasoning...")
+    try:
+        result = extract_package_names_with_reasoning(excel_files)
+        print(f"\n📊 Results:\n{result}")
+    except Exception as e:
+        print(f"❌ Error: {str(e)}")
