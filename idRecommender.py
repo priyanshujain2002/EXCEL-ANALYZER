@@ -24,8 +24,31 @@ embedder_config = {
         }
     }
 
+# --- New code to list files in the subfolder ---
+knowledge_subfolder_name = "Original Packages" # Name of the folder inside 'knowledge/'
+base_knowledge_dir = "knowledge" # Assuming KNOWLEDGE_DIRECTORY resolves to this
+
+# Construct the full path to the subfolder to list its contents
+# This path is used for os.listdir, so it needs to be relative to the script location
+full_path_to_subfolder = os.path.join(base_knowledge_dir, knowledge_subfolder_name)
+
+excel_file_paths = []
+if os.path.exists(full_path_to_subfolder) and os.path.isdir(full_path_to_subfolder):
+    for filename in os.listdir(full_path_to_subfolder):
+        # We assume all files in this specific folder are relevant Excel files
+        # as per your instruction.
+        excel_file_paths.append(os.path.join(knowledge_subfolder_name, filename))
+else:
+    # Handle error: folder not found or is not a directory
+    print(f"Error: Knowledge subfolder not found at {full_path_to_subfolder}")
+    # Depending on desired behavior, you might want to exit or raise an exception here.
+
+if not excel_file_paths:
+    # This will likely cause ExcelKnowledgeSource to raise an error, which is appropriate.
+    print(f"Warning: No Excel files found in {full_path_to_subfolder}. The knowledge source will be empty.")
+
 excel_source = ExcelKnowledgeSource(
-        file_paths=["original_packages.xlsx"],
+        file_paths=excel_file_paths,
         embedder=embedder_config
     )
 
