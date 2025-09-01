@@ -6,10 +6,16 @@ import os
 import glob
 import boto3
 
-llm = LLM(
+llm_crew1 = LLM(
     model="bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0",
     aws_region_name="us-east-1",
-    temperature=0.3,
+    temperature=0.1,  # Lower temperature for consistency in crew1
+)
+
+llm_crew2 = LLM(
+    model="bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0",
+    aws_region_name="us-east-1",
+    temperature=0.3,  # Higher temperature for creativity in crew2's reasoning
 )
 
 placement_names = ['First Screen Masthead - US', 'Universal Guide Masthead - US', 'Universal Guide Masthead - US (Weekend Heavy-Up)',
@@ -52,11 +58,30 @@ excel_source = ExcelKnowledgeSource(
         embedder=embedder_config
     )
 
+# --- Setup for High Impact Packages Knowledge Source ---
+high_impact_subfolder_name = "High Impact Packages" # Name of the folder inside 'knowledge/'
+full_path_to_high_impact_subfolder = os.path.join(base_knowledge_dir, high_impact_subfolder_name)
+
+high_impact_excel_file_paths = []
+if os.path.exists(full_path_to_high_impact_subfolder) and os.path.isdir(full_path_to_high_impact_subfolder):
+    for filename in os.listdir(full_path_to_high_impact_subfolder):
+        high_impact_excel_file_paths.append(os.path.join(high_impact_subfolder_name, filename))
+else:
+    print(f"Error: High Impact knowledge subfolder not found at {full_path_to_high_impact_subfolder}")
+
+if not high_impact_excel_file_paths:
+    print(f"Warning: No Excel files found in {full_path_to_high_impact_subfolder}. The high impact knowledge source will be empty.")
+
+high_impact_excel_source = ExcelKnowledgeSource(
+        file_paths=high_impact_excel_file_paths,
+        embedder=embedder_config
+    )
+
 knowledge_extractor = Agent(
     role = 'Excel File Reader',
     goal = 'Read the complete excel file successfully and extract all package information',
     backstory = 'You are an expert excel reader, who has mastered the art of reading and extracting knowledge from the excel files.',
-    llm = llm,
+    llm = llm_crew1,
     knowledge_sources = [excel_source],
     embedder=embedder_config,
     verbose = False,
@@ -67,7 +92,7 @@ placement_reader = Agent(
     role = 'Input list reader',
     goal = 'Read all the placement names present in the list and understand their characteristics',
     backstory = 'You are an expert in reading and analyzing placement name data from lists',
-    llm = llm,
+    llm = llm_crew1,
     verbose = False,
     embedder=embedder_config,
     allow_delegation = False
@@ -78,10 +103,28 @@ name_matcher = Agent(
     goal = 'Match placement names with package names from the knowledge source and recommend the top 3 most relevant package IDs',
     backstory = 'You are an expert in matching placement names with package names and providing accurate ID recommendations based on similarity and relevance.',
     knowledge_sources = [excel_source],
-    llm = llm,
+    llm = llm_crew1,
     verbose = False,
     embedder=embedder_config,
     allow_delegation = False
+)
+
+# --- Agent and Task for High Impact Analysis ---
+high_impact_analyzer = Agent(
+    role='High Impact Package Specialist',
+    goal="To identify and rank the top 3 high-impact packages based on a given list of package IDs, using the 'High Impact Packages' data.",
+    backstory="You are an expert analyst specializing in evaluating package impact. You can cross-reference provided IDs with a detailed database of high-impact packages, considering their frequency and associated reasoning to determine the most significant ones.",
+    llm=llm_crew2,
+    knowledge_sources=[high_impact_excel_source],
+    embedder=embedder_config,
+    verbose=False,
+    allow_delegation=False
+)
+
+analyze_high_impact_task = Task(
+    description="", # This will be dynamically set before execution
+    agent=high_impact_analyzer,
+    expected_output="A list of the top 3 high-impact package names with their reasoning, formatted as:\n1. [Package Name 1]: [Reasoning 1]\n2. [Package Name 2]: [Reasoning 2]\n3. [Package Name 3]: [Reasoning 3]"
 )
 
 # Define tasks for each agent
@@ -134,14 +177,40 @@ match_and_recommend_task = Task(
     context=[extract_knowledge_task, read_placements_task]
 )
 
-# Create and run the crew
-crew = Crew(
+# Create and run the first crew
+crew1 = Crew(
     agents=[knowledge_extractor, placement_reader, name_matcher],
     tasks=[extract_knowledge_task, read_placements_task, match_and_recommend_task],
     verbose=False
 )
 
-# Execute the crew
+# Create the second crew for high impact analysis
+crew2 = Crew(
+    agents=[high_impact_analyzer],
+    tasks=[analyze_high_impact_task],
+    verbose=False # Set to True for more detailed output from crew2
+)
+
+# Execute the crews sequentially
 if __name__ == "__main__":
-    result = crew.kickoff()
-    print(result)
+    print("Starting Crew 1: ID Recommendation...")
+    id_list_result = crew1.kickoff()
+    print(f"Crew 1 finished. Recommended IDs: {id_list_result}")
+
+    # Dynamically set the description for the second crew's task
+    analyze_high_impact_task.description = f"""
+    The previous crew recommended the following package IDs: {id_list_result}.
+    Your task is to:
+    1.  Parse these IDs.
+    2.  Consult your knowledge source (the 'High Impact Packages' Excel file(s)) to find all rows associated with these IDs. The file has columns: 'ID', 'High Impact Package Names', 'Reasoning'.
+    3.  Analyze the 'High Impact Package Names' and 'Reasoning' for these rows.
+    4.  Recommend the top 3 high-impact packages. A key criterion should be the frequency of each high-impact package name appearing across the provided IDs. Also, consider the strength and clarity of the 'Reasoning'.
+    5.  Output ONLY the top 3 high-impact package names with their reasoning, in the format:
+        1. [Package Name 1]: [Reasoning 1]
+        2. [Package Name 2]: [Reasoning 2]
+        3. [Package Name 3]: [Reasoning 3]
+    """
+
+    print("\nStarting Crew 2: High Impact Package Analysis...")
+    high_impact_packages_result = crew2.kickoff()
+    print(f"Crew 2 finished. Top High Impact Packages:\n{high_impact_packages_result}")
