@@ -2,6 +2,37 @@ import streamlit as st
 import pandas as pd
 from idRecommender_highImpactRecommender import recommend_packages
 
+def extract_package_names_only(recommendation_result):
+    """
+    Extract only package names from the recommendation result, removing reasoning and numbering
+    """
+    try:
+        if not recommendation_result:
+            return ""
+        
+        package_names = []
+        lines = str(recommendation_result).strip().split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if line and ':' in line:
+                # Split by colon and take the first part (package name with numbering)
+                package_with_numbering = line.split(':')[0].strip()
+                
+                # Remove the numbering (e.g., "1. ", "2. ", "3. ")
+                if '. ' in package_with_numbering:
+                    package_name = package_with_numbering.split('. ', 1)[1].strip()
+                else:
+                    package_name = package_with_numbering.strip()
+                
+                if package_name:
+                    package_names.append(package_name)
+        
+        return ", ".join(package_names)
+    except Exception as e:
+        # If parsing fails, return the original result
+        return str(recommendation_result)
+
 def store_feedback_to_excel(selected_placements, recommended_packages, feedback_options):
     """
     Store feedback data to Feedback_File.xlsx with auto-incrementing Task ID
@@ -145,14 +176,17 @@ if 'high_impact_packages_result' in st.session_state:
             if "No change required" in feedback_options and len(feedback_options) == 1:
                 st.success("Thank you for your feedback! The recommendations met your expectations.")
             else:
+                # Extract package names only (without reasoning)
+                package_names_only = extract_package_names_only(st.session_state['high_impact_packages_result'])
+                
                 # Store feedback to Excel file
                 success, result = store_feedback_to_excel(
                     selected_placements, 
-                    st.session_state['high_impact_packages_result'], 
+                    package_names_only, 
                     feedback_options
                 )
                 
                 if success:
-                    st.success(f"Thank you for your feedback!")
+                    st.success("Thank you for your feedback!")
                 else:
-                    st.error(f"Failed to save feedback")
+                    st.error("Failed to save feedback")
