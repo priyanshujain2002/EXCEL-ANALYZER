@@ -1,5 +1,46 @@
 import streamlit as st
+import pandas as pd
 from idRecommender_highImpactRecommender import recommend_packages
+
+def store_feedback_to_excel(selected_placements, recommended_packages, feedback_options):
+    """
+    Store feedback data to Feedback_File.xlsx with auto-incrementing Task ID
+    """
+    try:
+        # Read existing Excel file
+        try:
+            df_existing = pd.read_excel("Feedback_File.xlsx")
+            # Get the next Task ID (auto-increment)
+            if df_existing.empty:
+                next_task_id = 1
+            else:
+                next_task_id = df_existing['Task ID'].max() + 1
+        except FileNotFoundError:
+            # If file doesn't exist, create new DataFrame
+            next_task_id = 1
+            df_existing = pd.DataFrame(columns=['Task ID', 'Input package', 'Recommended packages', 'Feedback package'])
+        
+        # Format data as comma-separated strings
+        input_package_str = ", ".join(selected_placements)
+        feedback_package_str = ", ".join(feedback_options)
+        
+        # Create new row
+        new_row = {
+            'Task ID': next_task_id,
+            'Input package': input_package_str,
+            'Recommended packages': recommended_packages,
+            'Feedback package': feedback_package_str
+        }
+        
+        # Append new row to existing data
+        df_new = pd.concat([df_existing, pd.DataFrame([new_row])], ignore_index=True)
+        
+        # Save back to Excel file
+        df_new.to_excel("Feedback_File.xlsx", index=False)
+        
+        return True, next_task_id
+    except Exception as e:
+        return False, str(e)
 
 # Hardcoded placement names
 PLACEMENT_NAMES = [
@@ -103,3 +144,15 @@ if 'high_impact_packages_result' in st.session_state:
             # Process feedback
             if "No change required" in feedback_options and len(feedback_options) == 1:
                 st.success("Thank you for your feedback! The recommendations met your expectations.")
+            else:
+                # Store feedback to Excel file
+                success, result = store_feedback_to_excel(
+                    selected_placements, 
+                    st.session_state['high_impact_packages_result'], 
+                    feedback_options
+                )
+                
+                if success:
+                    st.success(f"Thank you for your feedback!")
+                else:
+                    st.error(f"Failed to save feedback")
