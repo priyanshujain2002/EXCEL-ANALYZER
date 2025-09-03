@@ -9,7 +9,7 @@ import boto3
 llm_crew1 = LLM(
     model="bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0",
     aws_region_name="us-east-1",
-    temperature=0.1,  # Lower temperature for consistency in crew1
+    temperature=0.0,  # Lower temperature for consistency in crew1
 )
 
 llm_crew2 = LLM(
@@ -18,8 +18,7 @@ llm_crew2 = LLM(
     temperature=0.3,  # Higher temperature for creativity in crew2's reasoning
 )
 
-placement_names = ['First Screen Masthead - US', 'Universal Guide Masthead - US', 'Universal Guide Masthead - US (Weekend Heavy-Up)',
-                    'Apps Store Masthead - US']
+# placement_names will be provided as a parameter to the recommend_packages function
 
 session = boto3.Session(region_name="us-east-1")
 embedder_config = {
@@ -143,35 +142,14 @@ extract_knowledge_task = Task(
 )
 
 read_placements_task = Task(
-    description=f"""
-    Analyze the following placement names list completely:
-    {placement_names}
-    
-    Understand the characteristics and patterns of these placement names.
-    Extract key information like:
-    - Platform/location indicators (e.g., 'US', 'Apps Store', 'Universal Guide')
-    - Placement types (e.g., 'Masthead', 'Screen')
-    - Special attributes (e.g., 'Weekend Heavy-Up', 'First Screen')
-    """,
+    description="",
     agent=placement_reader,
     expected_output="Analysis of the placement names and their characteristics",
     context=[extract_knowledge_task]
 )
 
 match_and_recommend_task = Task(
-    description=f"""
-    Using the knowledge from the Excel file and the placement analysis, match each of the following placement names:
-    {placement_names}
-    
-    Find packages that contain terms like:
-    - 'First Screen' (matches with 'First Screen Masthead - US')
-    - 'Universal' or 'Guide' (matches with 'Universal Guide Masthead - US')
-    - 'Apps' or 'Store' (matches with 'Apps Store Masthead - US')
-    - 'CTV' or connected TV related packages
-    
-    Return ONLY the top 3 package IDs that best match the placement names.
-    Format your final answer as: [ID1, ID2, ID3]
-    """,
+    description="",
     agent=name_matcher,
     expected_output="Top 3 package IDs in format [ID1, ID2, ID3]",
     context=[extract_knowledge_task, read_placements_task]
@@ -192,7 +170,43 @@ crew2 = Crew(
 )
 
 # Execute the crews sequentially
-if __name__ == "__main__":
+def recommend_packages(placement_names):
+    """
+    Recommend packages based on placement names.
+    
+    Args:
+        placement_names (list): List of placement names to analyze
+        
+    Returns:
+        tuple: (id_list_result, high_impact_packages_result)
+    """
+    # Update the read_placements_task description with the provided placement names
+    read_placements_task.description = f"""
+    Analyze the following placement names list completely:
+    {placement_names}
+    
+    Understand the characteristics and patterns of these placement names.
+    Extract key information like:
+    - Platform/location indicators (e.g., 'US', 'Apps Store', 'Universal Guide')
+    - Placement types (e.g., 'Masthead', 'Screen')
+    - Special attributes (e.g., 'Weekend Heavy-Up', 'First Screen')
+    """
+    
+    # Update the match_and_recommend_task description with the provided placement names
+    match_and_recommend_task.description = f"""
+    Using the knowledge from the Excel file and the placement analysis, match each of the following placement names:
+    {placement_names}
+    
+    Find packages that contain terms like:
+    - 'First Screen' (matches with 'First Screen Masthead - US')
+    - 'Universal' or 'Guide' (matches with 'Universal Guide Masthead - US')
+    - 'Apps' or 'Store' (matches with 'Apps Store Masthead - US')
+    - 'CTV' or connected TV related packages
+    
+    Return ONLY the top 3 package IDs that best match the placement names.
+    Format your final answer as: [ID1, ID2, ID3]
+    """
+    
     print("Starting Crew 1: ID Recommendation...")
     id_list_result = crew1.kickoff()
     print(f"Crew 1 finished. Recommended IDs: {id_list_result}")
@@ -205,7 +219,7 @@ if __name__ == "__main__":
     2.  Consult your knowledge source (the 'High Impact Packages' Excel file(s)) to find all rows associated with these IDs. The file has columns: 'ID', 'High Impact Package Names', 'Reasoning'.
     3.  Analyze the 'High Impact Package Names' and 'Reasoning' for these rows.
     4.  Recommend the top 3 high-impact packages. A key criterion should be the frequency of each high-impact package name appearing across the provided IDs. Also, consider the strength and clarity of the 'Reasoning'.
-    5.  Output ONLY the top 3 high-impact package names with their reasoning, in the format:
+    5.  Output ONLY the top 3 high-impact package names with their reasoning. Do NOT include any introductory text, explanations, or references to the provided IDs. Start directly with the numbered list in this exact format:
         1. [Package Name 1]: [Reasoning 1]
         2. [Package Name 2]: [Reasoning 2]
         3. [Package Name 3]: [Reasoning 3]
@@ -214,3 +228,10 @@ if __name__ == "__main__":
     print("\nStarting Crew 2: High Impact Package Analysis...")
     high_impact_packages_result = crew2.kickoff()
     print(f"Crew 2 finished. Top High Impact Packages:\n{high_impact_packages_result}")
+    
+    return high_impact_packages_result
+
+if __name__ == "__main__":
+    # Example usage for testing
+    placement_names = []
+    recommend_packages(placement_names)
