@@ -2,6 +2,17 @@ import streamlit as st
 import pandas as pd
 from idRecommender_highImpactRecommender import recommend_packages
 
+# Initialize session state variables
+def init_session_state():
+    if 'high_impact_packages_result' not in st.session_state:
+        st.session_state['high_impact_packages_result'] = None
+    if 'feedback_options' not in st.session_state:
+        st.session_state['feedback_options'] = []
+    if 'selected_placements' not in st.session_state:
+        st.session_state['selected_placements'] = []
+    if 'recommendation_generated' not in st.session_state:
+        st.session_state['recommendation_generated'] = False
+
 def extract_package_names_only(recommendation_result):
     """
     Extract only package names from the recommendation result, removing reasoning and numbering
@@ -69,9 +80,9 @@ def store_feedback_to_excel(selected_placements, recommended_packages, feedback_
         # Save back to Excel file
         df_new.to_excel("Feedback_File.xlsx", index=False)
         
-        return True, next_task_id
+        return True
     except Exception as e:
-        return False, str(e)
+        return False
 
 # Hardcoded placement names
 PLACEMENT_NAMES = [
@@ -93,6 +104,9 @@ HIGH_IMPACT_PACKAGES = [
     "First Screen Immersive Rotational Roadblock"
 ]
 
+# Initialize session state
+init_session_state()
+
 # Set page configuration
 st.set_page_config(
     page_title="Package Recommendation System",
@@ -111,11 +125,16 @@ Simply select the placement names you're interested in and click the Recommend b
 # Sidebar with inputs
 st.sidebar.header("Input Parameters")
 
-# Placement names selector
+# Placement names selector - sync with session state
 selected_placements = st.sidebar.multiselect(
     "Select Placement Names:",
-    PLACEMENT_NAMES
+    PLACEMENT_NAMES,
+    default=st.session_state['selected_placements']
 )
+
+# Update session state when selection changes
+if selected_placements != st.session_state['selected_placements']:
+    st.session_state['selected_placements'] = selected_placements
 
 # Recommend button
 recommend_button = st.sidebar.button("Recommend Packages", type="primary")
@@ -131,41 +150,48 @@ if recommend_button:
                 # Call the recommendation function
                 high_impact_packages_result = recommend_packages(selected_placements)
                 
-                # Display the results
-                st.subheader("Recommendation Results")
-                
-                # Format the placement names for display
-                placement_names_str = ", ".join(selected_placements)
-                
-                # Display the high impact packages in markdown format
-                st.markdown(f"""
-For the given placement names, the most recommended high impact packages are:
-
-{high_impact_packages_result}
-                """)
-                
                 # Store results in session state for feedback
                 st.session_state['high_impact_packages_result'] = high_impact_packages_result
-                
-                # Show success message
-                st.success("Recommendation completed successfully!")
+                st.session_state['recommendation_generated'] = True
                 
             except Exception as e:
                 st.error(f"An error occurred during recommendation: {str(e)}")
+
+# Display recommendation results if they exist in session state
+if st.session_state['high_impact_packages_result'] is not None:
+    st.subheader("Recommendation Results")
+    
+    # Format the placement names for display
+    placement_names_str = ", ".join(st.session_state['selected_placements'])
+    
+    # Display the high impact packages in markdown format
+    st.markdown(f"""
+For the given placement names, the most recommended high impact packages are:
+
+{st.session_state['high_impact_packages_result']}
+    """)
+    
+    if st.session_state['recommendation_generated']:
+        st.success("Recommendation completed successfully!")
 else:
     # Initial message
     st.info("Select placement names from the sidebar and click 'Recommend Packages' to get started.")
 
 # Feedback section (only show after recommendations are made)
-if 'high_impact_packages_result' in st.session_state:
+if st.session_state['high_impact_packages_result'] is not None:
     st.subheader("Feedback")
     st.markdown("Please provide feedback on the recommended high-impact packages:")
     
-    # Feedback multiselect
+    # Feedback multiselect - sync with session state
     feedback_options = st.multiselect(
         "Select your feedback:",
-        HIGH_IMPACT_PACKAGES
+        HIGH_IMPACT_PACKAGES,
+        default=st.session_state['feedback_options']
     )
+    
+    # Update session state when feedback selection changes
+    if feedback_options != st.session_state['feedback_options']:
+        st.session_state['feedback_options'] = feedback_options
     
     # Feedback submit button
     if st.button("Submit Feedback"):
@@ -180,13 +206,15 @@ if 'high_impact_packages_result' in st.session_state:
                 package_names_only = extract_package_names_only(st.session_state['high_impact_packages_result'])
                 
                 # Store feedback to Excel file
-                success, result = store_feedback_to_excel(
-                    selected_placements, 
+                success= store_feedback_to_excel(
+                    st.session_state['selected_placements'], 
                     package_names_only, 
                     feedback_options
                 )
                 
                 if success:
                     st.success("Thank you for your feedback!")
+                    # Clear feedback options after successful submission
+                    st.session_state['feedback_options'] = []
                 else:
                     st.error("Failed to save feedback")

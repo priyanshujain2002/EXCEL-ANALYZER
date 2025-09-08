@@ -1,3 +1,9 @@
+"""
+This script contains two crews, one for recommending id which takes original_packages.xlsx as its knowledge source
+and the other for recommending top 3 high impact packages which takes high_impact_packages.xlsx as its knowledge source.
+"""
+
+
 from crewai import Agent, Task, Crew, LLM
 from crewai.knowledge.source.excel_knowledge_source import ExcelKnowledgeSource
 import json

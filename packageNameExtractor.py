@@ -1,3 +1,8 @@
+"""
+In this script we input the cleaned media plans and this script analyses it and gives two json file, one for original package and
+the other for high impact package. 
+"""
+
 from crewai import Agent, Task, Crew, LLM
 from crewai.knowledge.source.excel_knowledge_source import ExcelKnowledgeSource
 import os
