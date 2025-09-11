@@ -5,19 +5,38 @@ This script contains a CrewAI agent that reads genre data from an Excel knowledg
 and recommends related genres based on semantic similarity found within the dataset.
 """
 
+import os
+# Disable telemetry before importing CrewAI to prevent connection issues
+os.environ["OTEL_SDK_DISABLED"] = "true"
+os.environ["CREWAI_TELEMETRY_ENABLED"] = "false"
+os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
+
 from crewai import Agent, Task, Crew, LLM
 from crewai.knowledge.source.excel_knowledge_source import ExcelKnowledgeSource
 import pandas as pd
 import os
 import boto3
+import time
+import logging
+from typing import Optional
 
-# Initialize Bedrock session and LLM configuration
+# Configure logging
+logging.basicConfig(level=logging.WARNING)
+logging.getLogger("crewai").setLevel(logging.WARNING)
+
+# Disable CrewAI telemetry to prevent connection issues
+os.environ["OTEL_SDK_DISABLED"] = "true"
+os.environ["CREWAI_TELEMETRY_ENABLED"] = "false"
+
+# Initialize Bedrock session and LLM configuration with retry settings
 session = boto3.Session(region_name="us-east-1")
 
 llm = LLM(
     model="bedrock/us.anthropic.claude-3-7-sonnet-20250219-v1:0",
     aws_region_name="us-east-1",
     temperature=0.1,  # Lower temperature for consistent genre analysis
+    timeout=120,  # Increase timeout to 2 minutes
+    max_retries=3,  # Add retry mechanism
 )
 
 embedder_config = {
@@ -121,12 +140,14 @@ genre_crew = Crew(
     verbose=True
 )
 
-def find_related_genres(input_genre):
+def find_related_genres(input_genre, max_retries: int = 3, retry_delay: int = 5):
     """
     Find genres that are related to the input genre using advanced multi-criteria analysis.
     
     Args:
         input_genre (str): The genre to find related genres for
+        max_retries (int): Maximum number of retry attempts
+        retry_delay (int): Delay between retries in seconds
         
     Returns:
         str: Formatted results with IDs, related genres, and comprehensive reasoning
@@ -197,11 +218,110 @@ def find_related_genres(input_genre):
     
     print(f"\n🎯 Initiating advanced multi-criteria analysis for genre: '{input_genre}'")
     
+    # Implement retry logic for crew execution
+    for attempt in range(max_retries):
+        try:
+            print(f"🚀 Attempt {attempt + 1}/{max_retries}")
+            
+            # Run the crew with timeout handling
+            result = genre_crew.kickoff()
+            
+            # If we get here, the execution was successful
+            return result
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"⚠️  Attempt {attempt + 1} failed: {error_msg}")
+            
+            # Check if this is a connection-related error
+            if any(keyword in error_msg.lower() for keyword in [
+                'connection', 'timeout', 'disconnected', 'bedrock', 'api', 'network'
+            ]):
+                if attempt < max_retries - 1:
+                    print(f"🔄 Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    print("❌ All retry attempts exhausted. Providing fallback response.")
+                    return generate_fallback_response(input_genre)
+            else:
+                # For non-connection errors, don't retry
+                raise e
     
-    # Run the crew
-    result = genre_crew.kickoff()
+    # This shouldn't be reached, but just in case
+    return generate_fallback_response(input_genre)
+
+def generate_fallback_response(input_genre: str) -> str:
+    """
+    Generate a fallback response when the AI analysis fails.
     
-    return result
+    Args:
+        input_genre (str): The input genre
+        
+    Returns:
+        str: Fallback response with basic genre relationships
+    """
+    # Load the data to provide basic recommendations
+    try:
+        df = pd.read_excel(full_path)
+        if 'Genre' in df.columns:
+            # Find genres that contain similar keywords
+            genre_lower = input_genre.lower()
+            related_keywords = []
+            
+            # Define basic genre relationship mappings
+            genre_relationships = {
+                'crime': ['mystery', 'thriller', 'drama', 'suspense', 'law', 'detective'],
+                'mystery': ['crime', 'thriller', 'suspense', 'detective', 'drama'],
+                'comedy': ['sitcom', 'variety', 'entertainment', 'family'],
+                'drama': ['romance', 'family', 'general drama', 'crime drama'],
+                'action': ['adventure', 'thriller', 'crime', 'suspense'],
+                'horror': ['thriller', 'suspense', 'mystery', 'paranormal'],
+                'romance': ['drama', 'comedy', 'romantic comedy', 'family'],
+                'documentary': ['education', 'history', 'science', 'nature'],
+                'sports': ['competition', 'reality', 'entertainment'],
+                'music': ['variety', 'entertainment', 'concert', 'dance']
+            }
+            
+            # Find related genres based on keywords
+            for key, related_list in genre_relationships.items():
+                if key in genre_lower:
+                    related_keywords.extend(related_list)
+            
+            # Search for matching genres in the dataset
+            fallback_genres = []
+            for keyword in related_keywords[:10]:  # Limit search
+                matches = df[df['Genre'].str.contains(keyword, case=False, na=False)]
+                for _, row in matches.head(2).iterrows():  # Max 2 per keyword
+                    if row['Genre'].lower() != input_genre.lower():
+                        fallback_genres.append({
+                            'id': row.get('ID', 'N/A'),
+                            'genre': row['Genre'],
+                            'reason': f"Shares thematic elements with {input_genre}"
+                        })
+            
+            # Remove duplicates and limit results
+            seen_genres = set()
+            unique_fallback = []
+            for item in fallback_genres:
+                if item['genre'] not in seen_genres:
+                    seen_genres.add(item['genre'])
+                    unique_fallback.append(item)
+                if len(unique_fallback) >= 5:
+                    break
+            
+            if unique_fallback:
+                response = f"🔄 Fallback Analysis Results for '{input_genre}':\n\n"
+                for item in unique_fallback:
+                    response += f"ID: {item['id']}\n"
+                    response += f"Genre: {item['genre']}\n"
+                    response += f"Reasoning: {item['reason']}\n\n---\n\n"
+                return response
+    
+    except Exception as e:
+        print(f"⚠️  Fallback generation failed: {e}")
+    
+    return f"❌ Unable to analyze '{input_genre}' due to technical difficulties. Please try again later."
 
 def load_and_preview_data():
     """
@@ -318,10 +438,17 @@ if __name__ == "__main__":
             
             try:
                 results = find_related_genres(user_input)
-                print("GENRE RECOMMENDATION RESULTS:")
+                print("\n" + "="*60)
+                print("🎬 GENRE RECOMMENDATION RESULTS:")
+                print("="*60)
                 print(results)
+                print("="*60)
                 
+            except KeyboardInterrupt:
+                print("\n\n🛑 Analysis interrupted by user.")
+                break
             except Exception as e:
                 print(f"\n❌ An error occurred during analysis: {e}")
+                print("💡 This might be due to network connectivity issues. Please try again.")
                 
 
