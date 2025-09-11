@@ -1,8 +1,14 @@
 """
-Genre Recommendation Agent
+Enhanced Genre Recommendation System
 
-This script contains a CrewAI agent that reads genre data from an Excel knowledge source
-and recommends related genres based on semantic similarity found within the dataset.
+This script contains a dual-agent CrewAI system that:
+1. Finds related genres based on semantic similarity (Genre Analyst)
+2. Ranks recommendations by supply priority using X and Y values (Supply Priority Analyst)
+
+The system provides genre recommendations ranked by supply opportunity metrics where:
+- X = % of unsold supply belonging to that supply type
+- Y = % of that supply type that is unsold
+- Priority given to X when ranking (higher X = higher priority)
 """
 
 import os
@@ -48,7 +54,7 @@ embedder_config = {
 }
 
 # Setup Excel Knowledge Source for genre data
-genre_excel_path = "Testing Sheet.xlsx"
+genre_excel_path = "Request Response Database.xlsx"
 
 # Verify the file exists (ExcelKnowledgeSource looks in knowledge directory by default)
 full_path = os.path.join("knowledge", genre_excel_path)
@@ -99,6 +105,40 @@ genre_analyst = Agent(
     allow_delegation=False
 )
 
+# Create the supply priority analyst agent
+supply_priority_analyst = Agent(
+    role='Supply Chain Priority Strategist',
+    goal='Analyze and rank recommended genres based on supply opportunity metrics (X and Y values) to identify high-priority business opportunities',
+    backstory='''You are a senior supply chain strategist and business intelligence expert with 15+ years of experience
+    in media inventory optimization and revenue maximization. Your specialized expertise includes:
+    
+    CORE COMPETENCIES:
+    - Supply-Demand Analytics: Expert in analyzing unsold inventory patterns and supply chain inefficiencies
+    - Revenue Optimization: Skilled at identifying high-value opportunities in underutilized content categories
+    - Market Gap Analysis: Proficient in spotting supply-demand mismatches that represent business opportunities
+    - Priority Scoring: Advanced in creating weighted scoring systems for business decision-making
+    - Risk-Reward Assessment: Experienced in balancing opportunity size with market penetration difficulty
+    
+    ANALYTICAL FRAMEWORK:
+    - X Value Analysis: % of unsold supply belonging to that supply type (market share of unsold inventory)
+    - Y Value Analysis: % of that supply type that is unsold (inefficiency rate within category)
+    - Combined Priority Scoring: Sophisticated weighting of X and Y to identify optimal opportunities
+    - Business Impact Assessment: Evaluation of potential ROI and strategic value
+    
+    PRIORITY PHILOSOPHY:
+    - High X + High Y = Maximum Priority (large unsold market share + high inefficiency rate)
+    - High X + Low Y = Strategic Priority (large market presence but efficient - competitive advantage opportunity)
+    - Low X + High Y = Niche Priority (small but highly inefficient - quick wins possible)
+    - Low X + Low Y = Low Priority (small market share and efficient - limited opportunity)
+    
+    You provide data-driven, actionable business intelligence with clear priority rankings and strategic reasoning.''',
+    llm=llm,
+    knowledge_sources=[excel_source],
+    embedder=embedder_config,
+    verbose=True,
+    allow_delegation=False
+)
+
 # Create the genre analysis task
 analyze_genres_task = Task(
     description="""
@@ -133,10 +173,18 @@ recommend_genres_task = Task(
     context=[analyze_genres_task]
 )
 
-# Create the crew
+# Create the supply priority ranking task
+rank_by_supply_priority_task = Task(
+    description="", # This will be dynamically set
+    agent=supply_priority_analyst,
+    expected_output="Ranked list of genres with same ID/Genre/Reasoning format, ordered by supply priority",
+    context=[recommend_genres_task]
+)
+
+# Create the crew with both agents
 genre_crew = Crew(
-    agents=[genre_analyst],
-    tasks=[analyze_genres_task, recommend_genres_task],
+    agents=[genre_analyst, supply_priority_analyst],
+    tasks=[analyze_genres_task, recommend_genres_task, rank_by_supply_priority_task],
     verbose=True
 )
 
@@ -216,7 +264,42 @@ def find_related_genres(input_genre, max_retries: int = 3, retry_delay: int = 5)
     - Double-check that every recommended genre exists in the provided dataset
     """
     
+    # Update the supply priority ranking task description
+    rank_by_supply_priority_task.description = f"""
+    Take the genre recommendations from the Genre Analyst and re-rank them based on supply opportunity metrics (X and Y values).
+    
+    RANKING METHODOLOGY:
+    1. For each recommended genre, extract X and Y values from the Excel knowledge source:
+       - X Value: % of unsold supply belonging to that supply type
+       - Y Value: % of that supply type that is unsold
+    
+    2. RANKING PRIORITY SYSTEM:
+       - Primary Sort: X value (descending) - prioritize genres with higher % of unsold supply
+       - Secondary Sort: Y value (descending) - when X values are similar, prioritize higher % unsold rate
+       - When X values are equal or very close, give priority to higher X value
+    
+    3. MAINTAIN EXACT OUTPUT FORMAT:
+       Keep the exact same format as the Genre Analyst provided:
+       
+       ID: [Excel_Row_ID]
+       Genre: [Exact_Genre_Name_From_Knowledge_Base]
+       Reasoning: [Original reasoning from Genre Analyst]
+       
+       ---
+    
+    4. REQUIREMENTS:
+       - Maintain all original recommendations from Genre Analyst
+       - Only change the ORDER based on X and Y values (X priority, then Y)
+       - Keep exact same ID, Genre, and Reasoning text
+       - Do not add any additional information or metrics to the output
+       - Simply reorder the list with highest priority (high X, high Y) first
+    
+    CRITICAL: Output must look identical to Genre Analyst format, just reordered by supply priority.
+    """
+    
     print(f"\n🎯 Initiating advanced multi-criteria analysis for genre: '{input_genre}'")
+    print("📊 Phase 1: Genre Relationship Analysis")
+    print("📈 Phase 2: Supply Priority Ranking")
     
     # Implement retry logic for crew execution
     for attempt in range(max_retries):
@@ -382,13 +465,16 @@ def get_genre_suggestions(df, limit=15):
     return df['Genre'].dropna().unique()[:limit].tolist()
 
 if __name__ == "__main__":
-    print("Genre Recommendation System")
+    print("🎬 Enhanced Genre Recommendation System")
+    print("📊 Dual-Agent Analysis: Genre Relations + Supply Priority Ranking")
+    print("="*60)
     
     # Load and preview data
     df = load_and_preview_data()
     
     if df is not None:
         print(f"\n✅ Successfully loaded genre knowledge base with {len(df)} entries")
+        print("🤖 Dual-agent system ready: Genre Analyst + Supply Priority Analyst")
         
         while True:
             # Get user input
@@ -432,14 +518,15 @@ if __name__ == "__main__":
                         print(f"   {i}. {genre}")
                 continue
             
-            # Find related genres
+            # Find related genres with supply priority ranking
             print(f"\n🔍 Analyzing relationships for: '{user_input}'")
-            
+            print("🤖 Running dual-agent analysis...")
             
             try:
                 results = find_related_genres(user_input)
                 print("\n" + "="*60)
                 print("🎬 GENRE RECOMMENDATION RESULTS:")
+                print("📊 Ranked by Supply Priority (X & Y values)")
                 print("="*60)
                 print(results)
                 print("="*60)
