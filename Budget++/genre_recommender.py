@@ -273,12 +273,21 @@ def find_related_genres(input_genre, max_retries: int = 3, retry_delay: int = 5)
        - X Value: % of unsold supply belonging to that supply type
        - Y Value: % of that supply type that is unsold
     
-    2. RANKING PRIORITY SYSTEM:
-       - Primary Sort: X value (descending) - prioritize genres with higher % of unsold supply
-       - Secondary Sort: Y value (descending) - when X values are similar, prioritize higher % unsold rate
-       - When X values are equal or very close, give priority to higher X value
+    2. RANKING PRIORITY SYSTEM (HIGHEST VALUES FIRST):
+       - GOAL: Put genres with HIGH X and HIGH Y values at the TOP of the list
+       - Primary Sort: X value (HIGHEST to LOWEST) - genres with higher X values appear FIRST
+       - Secondary Sort: Y value (HIGHEST to LOWEST) - when X values are similar, higher Y values appear FIRST
+       - X is MAJOR priority: If there's significant difference in X values, X dominates the ranking
+       - Y is tie-breaker: Only when X values are close (within ~0.5%), then Y becomes the deciding factor
+       - BEST combinations appear FIRST: High X + High Y = TOP priority (position 1, 2, 3...)
+       - WORST combinations appear LAST: Low X + Low Y = BOTTOM priority
     
-    3. MAINTAIN EXACT OUTPUT FORMAT:
+    3. RANKING EXAMPLES:
+       - Genre A (X=15, Y=85) should appear BEFORE Genre B (X=10, Y=90)
+       - Genre C (X=12, Y=80) should appear BEFORE Genre D (X=12, Y=70)
+       - Genre E (X=20, Y=60) should appear BEFORE Genre F (X=8, Y=95)
+    
+    4. MAINTAIN EXACT OUTPUT FORMAT:
        Keep the exact same format as the Genre Analyst provided:
        
        ID: [Excel_Row_ID]
@@ -287,17 +296,24 @@ def find_related_genres(input_genre, max_retries: int = 3, retry_delay: int = 5)
        
        ---
     
-    4. REQUIREMENTS:
+    5. REQUIREMENTS:
        - Maintain all original recommendations from Genre Analyst
-       - Only change the ORDER based on X and Y values (X priority, then Y)
+       - Only change the ORDER based on X and Y values (X major priority, Y minor priority)
        - Keep exact same ID, Genre, and Reasoning text
        - Do not add any additional information or metrics to the output
-       - Simply reorder the list with highest priority (high X, high Y) first
+       - Put HIGHEST X and Y combinations at the TOP (first positions)
+       - Put LOWEST X and Y combinations at the BOTTOM (last positions)
     
-    CRITICAL: Output must look identical to Genre Analyst format, just reordered by supply priority.
+    CRITICAL: Output must look identical to Genre Analyst format, just reordered with HIGH X + HIGH Y genres appearing FIRST in the list.
+    
+    FINAL RANKING INSTRUCTION:
+    - Sort the list so that the HIGHEST X values appear at position 1, 2, 3... (TOP of the list)
+    - Within similar X values (difference < 0.5%), put HIGHEST Y values first
+    - The genre with the BEST combination (highest X + highest Y) should be the VERY FIRST recommendation
+    - The genre with the WORST combination (lowest X + lowest Y) should be the VERY LAST recommendation
     """
     
-    print(f"\n🎯 Initiating advanced multi-criteria analysis for genre: '{input_genre}'")
+    print(f"\n🎯 Initiating analysis for genre: '{input_genre}'")
     print("📊 Phase 1: Genre Relationship Analysis")
     print("📈 Phase 2: Supply Priority Ranking")
     
@@ -325,86 +341,14 @@ def find_related_genres(input_genre, max_retries: int = 3, retry_delay: int = 5)
                     time.sleep(retry_delay)
                     continue
                 else:
-                    print("❌ All retry attempts exhausted. Providing fallback response.")
-                    return generate_fallback_response(input_genre)
+                    print("❌ All retry attempts exhausted.")
+                    raise e
             else:
                 # For non-connection errors, don't retry
                 raise e
     
     # This shouldn't be reached, but just in case
-    return generate_fallback_response(input_genre)
-
-def generate_fallback_response(input_genre: str) -> str:
-    """
-    Generate a fallback response when the AI analysis fails.
-    
-    Args:
-        input_genre (str): The input genre
-        
-    Returns:
-        str: Fallback response with basic genre relationships
-    """
-    # Load the data to provide basic recommendations
-    try:
-        df = pd.read_excel(full_path)
-        if 'Genre' in df.columns:
-            # Find genres that contain similar keywords
-            genre_lower = input_genre.lower()
-            related_keywords = []
-            
-            # Define basic genre relationship mappings
-            genre_relationships = {
-                'crime': ['mystery', 'thriller', 'drama', 'suspense', 'law', 'detective'],
-                'mystery': ['crime', 'thriller', 'suspense', 'detective', 'drama'],
-                'comedy': ['sitcom', 'variety', 'entertainment', 'family'],
-                'drama': ['romance', 'family', 'general drama', 'crime drama'],
-                'action': ['adventure', 'thriller', 'crime', 'suspense'],
-                'horror': ['thriller', 'suspense', 'mystery', 'paranormal'],
-                'romance': ['drama', 'comedy', 'romantic comedy', 'family'],
-                'documentary': ['education', 'history', 'science', 'nature'],
-                'sports': ['competition', 'reality', 'entertainment'],
-                'music': ['variety', 'entertainment', 'concert', 'dance']
-            }
-            
-            # Find related genres based on keywords
-            for key, related_list in genre_relationships.items():
-                if key in genre_lower:
-                    related_keywords.extend(related_list)
-            
-            # Search for matching genres in the dataset
-            fallback_genres = []
-            for keyword in related_keywords[:10]:  # Limit search
-                matches = df[df['Genre'].str.contains(keyword, case=False, na=False)]
-                for _, row in matches.head(2).iterrows():  # Max 2 per keyword
-                    if row['Genre'].lower() != input_genre.lower():
-                        fallback_genres.append({
-                            'id': row.get('ID', 'N/A'),
-                            'genre': row['Genre'],
-                            'reason': f"Shares thematic elements with {input_genre}"
-                        })
-            
-            # Remove duplicates and limit results
-            seen_genres = set()
-            unique_fallback = []
-            for item in fallback_genres:
-                if item['genre'] not in seen_genres:
-                    seen_genres.add(item['genre'])
-                    unique_fallback.append(item)
-                if len(unique_fallback) >= 5:
-                    break
-            
-            if unique_fallback:
-                response = f"🔄 Fallback Analysis Results for '{input_genre}':\n\n"
-                for item in unique_fallback:
-                    response += f"ID: {item['id']}\n"
-                    response += f"Genre: {item['genre']}\n"
-                    response += f"Reasoning: {item['reason']}\n\n---\n\n"
-                return response
-    
-    except Exception as e:
-        print(f"⚠️  Fallback generation failed: {e}")
-    
-    return f"❌ Unable to analyze '{input_genre}' due to technical difficulties. Please try again later."
+    raise Exception("Unexpected error in genre analysis")
 
 def load_and_preview_data():
     """
