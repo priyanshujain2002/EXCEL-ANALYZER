@@ -54,7 +54,7 @@ embedder_config = {
 }
 
 # Setup Excel Knowledge Source for genre data
-genre_excel_path = "Request Response Database.xlsx"
+genre_excel_path = "druid_query_results.xlsx"
 
 # Verify the file exists (ExcelKnowledgeSource looks in knowledge directory by default)
 full_path = os.path.join("knowledge", genre_excel_path)
@@ -358,10 +358,19 @@ def load_and_preview_data():
         df = pd.read_excel(full_path)
         print("📊 Genre Knowledge Base Preview:")
         
-        # Additional analysis for genre column
-        if 'Genre' in df.columns:
-            unique_genres = df['Genre'].dropna().nunique()
+        # Find the genre column (case insensitive)
+        genre_col = None
+        for col in df.columns:
+            if col.lower() == 'genre':
+                genre_col = col
+                break
+        
+        if genre_col:
+            unique_genres = df[genre_col].dropna().nunique()
             print(f"   • Unique genres: {unique_genres}")
+            print(f"   • Genre column found: '{genre_col}'")
+        else:
+            print(f"   • Available columns: {list(df.columns)}")
             
         return df
     except Exception as e:
@@ -379,16 +388,26 @@ def validate_genre_exists(input_genre, df):
     Returns:
         tuple: (bool, list) - (exists, similar_genres)
     """
-    if df is None or 'Genre' not in df.columns:
+    if df is None:
+        return False, []
+    
+    # Find the genre column (case insensitive)
+    genre_col = None
+    for col in df.columns:
+        if col.lower() == 'genre':
+            genre_col = col
+            break
+    
+    if not genre_col:
         return False, []
     
     # Exact match (case insensitive)
-    exact_match = df[df['Genre'].str.lower() == input_genre.lower()]
+    exact_match = df[df[genre_col].str.lower() == input_genre.lower()]
     if not exact_match.empty:
         return True, []
     
     # Find similar genres (partial matches)
-    similar_genres = df[df['Genre'].str.contains(input_genre, case=False, na=False)]['Genre'].unique()
+    similar_genres = df[df[genre_col].str.contains(input_genre, case=False, na=False)][genre_col].unique()
     
     return False, list(similar_genres)
 
@@ -403,10 +422,20 @@ def get_genre_suggestions(df, limit=15):
     Returns:
         list: List of genre suggestions
     """
-    if df is None or 'Genre' not in df.columns:
+    if df is None:
         return []
     
-    return df['Genre'].dropna().unique()[:limit].tolist()
+    # Find the genre column (case insensitive)
+    genre_col = None
+    for col in df.columns:
+        if col.lower() == 'genre':
+            genre_col = col
+            break
+    
+    if not genre_col:
+        return []
+    
+    return df[genre_col].dropna().unique()[:limit].tolist()
 
 if __name__ == "__main__":
     print("🎬 Enhanced Genre Recommendation System")
