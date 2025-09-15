@@ -4,13 +4,13 @@ Enhanced Genre Similarity Scorer using Pre-existing Descriptions and Sentence Tr
 This script reads genres and their descriptions from the druid query results file and uses:
 1. Pre-existing descriptions from the Excel file for genres in the dataset
 2. CrewAI with AWS Bedrock to generate meaningful one-line descriptions for new input genres only
-3. Sentence transformer embeddings (all-MiniLM-L6-v2) to calculate
+3. Sentence transformer embeddings (all-mpnet-base-v2) to calculate 
    relevance scores between an input genre and all genres in the dataset
 
 Features:
 - Uses pre-existing descriptions from Excel file for known genres
 - Uses CrewAI agent to generate intelligent descriptions only for new input genres
-- Uses sentence-transformers library with all-MiniLM-L6-v2 model
+- Uses sentence-transformers library with all-mpnet-base-v2 model
 - Calculates cosine similarity between genre description embeddings
 - Returns ranked list of similar genres with similarity scores
 - Includes supply metrics (X and Y values) for business insights
@@ -166,7 +166,7 @@ class GenreSimilarityScorerWithDescriptions:
             excel_file_path (str): Path to the Excel file containing genre data with descriptions
         """
         self.excel_file_path = excel_file_path
-        self.model_name = "all-MiniLM-L6-v2"
+        self.model_name = "all-mpnet-base-v2"
         self.model = None
         self.genres_df = None
         self.genre_embeddings = None
@@ -542,7 +542,7 @@ def print_results(input_genre: str, results: List[Dict]):
 def main():
     """Main function to run the enhanced genre similarity scorer."""
     print("🎬 Enhanced Genre Similarity Scorer using Pre-existing Descriptions")
-    print("🤖 Model: all-MiniLM-L6-v2 + CrewAI (Claude 3.7 Sonnet) for new inputs")
+    print("🤖 Model: all-mpnet-base-v2 + CrewAI (Claude 3.7 Sonnet) for new inputs")
     print("📝 Combined genre name and description semantic similarity analysis")
     print("="*70)
     
