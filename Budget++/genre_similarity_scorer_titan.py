@@ -1,12 +1,12 @@
 """
-Genre Similarity Scorer using Sentence Transformers
+Genre Similarity Scorer using Amazon Titan Text Embeddings V2
 
 This script reads genres from the druid query results file and uses 
-sentence transformer embeddings (all-MiniLM-L6-v2) to calculate 
+Amazon Titan Text Embeddings V2 to calculate 
 relevance scores between an input genre and all genres in the dataset.
 
 Features:
-- Uses sentence-transformers library with all-MiniLM-L6-v2 model
+- Uses Amazon Bedrock with Titan Text Embeddings V2 model
 - Calculates cosine similarity between genre embeddings
 - Returns ranked list of similar genres with similarity scores
 - Includes supply metrics (X and Y values) for business insights
@@ -14,45 +14,24 @@ Features:
 
 import pandas as pd
 import numpy as np
-from sentence_transformers import SentenceTransformer
+import boto3
 from sklearn.metrics.pairwise import cosine_similarity
 import os
 import sys
 from typing import List, Tuple, Dict
 import warnings
-import ssl
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-
-# Disable SSL certificate verification (for development/testing only)
-ssl._create_default_https_context = ssl._create_unverified_context
-
-# Create a requests session with SSL verification disabled
-def create_unverified_session():
-    # Call the original Session class to avoid recursion
-    session = original_session()
-    retry_strategy = Retry(
-        total=3,
-        backoff_factor=1,
-        status_forcelist=[429, 500, 502, 503, 504],
-    )
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    session.verify = False  # Disable SSL verification
-    return session
-
-# Store original Session class and monkey patch requests to use our unverified session
-original_session = requests.Session
-requests.Session = create_unverified_session
+import json
+import logging
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore')
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 class GenreSimilarityScorer:
     """
-    A class to calculate genre similarity using sentence transformer embeddings.
+    A class to calculate genre similarity using Amazon Titan Text Embeddings V2.
     """
     
     def __init__(self, excel_file_path: str = "Budget++/knowledge/druid_query_results.xlsx"):
@@ -63,15 +42,15 @@ class GenreSimilarityScorer:
             excel_file_path (str): Path to the Excel file containing genre data
         """
         self.excel_file_path = excel_file_path
-        self.model_name = "all-mpnet-base-v2"
-        self.model = None
+        self.model_id = "amazon.titan-embed-text-v2:0" # Titan Text Embeddings V2 model ID
+        self.bedrock_runtime = None
         self.genres_df = None
         self.genre_embeddings = None
         self.genres_list = None
         
-        # Load data and model
+        # Load data and model client
         self._load_data()
-        self._load_model()
+        self._initialize_bedrock_client()
         self._generate_embeddings()
     
     def _load_data(self):
@@ -106,34 +85,88 @@ class GenreSimilarityScorer:
             print(f"❌ Error loading data: {e}")
             sys.exit(1)
     
-    def _load_model(self):
-        """Load the sentence transformer model."""
+    def _initialize_bedrock_client(self):
+        """Initialize the Amazon Bedrock runtime client."""
         try:
-            print(f"🤖 Loading sentence transformer model: {self.model_name}")
-            print("📥 This may take a moment on first run (downloading model)...")
+            print(f"🤖 Initializing Amazon Bedrock client for model: {self.model_id}")
             
-            self.model = SentenceTransformer(self.model_name)
+            # boto3 client will automatically use credentials from environment variables
+            # or ~/.aws/credentials, or IAM role if running on EC2.
+            # saml2aws typically populates ~/.aws/credentials.
+            self.bedrock_runtime = boto3.client('bedrock-runtime', region_name='us-east-1') # Or your preferred region
             
-            print(f"✅ Model {self.model_name} loaded successfully")
+            # Test client by listing models (optional, but good for verification)
+            # bedrock = boto3.client('bedrock', region_name='us-east-1')
+            # foundation_models = bedrock.list_foundation_models()
+            # titan_model_info = next((model for model in foundation_models['modelSummaries'] if model['modelId'] == self.model_id), None)
+            # if titan_model_info:
+            #     print(f"✅ Confirmed model {self.model_id} is available.")
+            # else:
+            #     print(f"⚠️  Model {self.model_id} not found in list_foundation_models. Check region or model ID.")
+            
+            print(f"✅ Amazon Bedrock client initialized successfully for {self.model_id}")
             
         except Exception as e:
-            print(f"❌ Error loading model: {e}")
-            print("� Make sure you have sentence-transformers installed: pip install sentence-transformers")
+            print(f"❌ Error initializing Bedrock client: {e}")
+            print("💡 Ensure AWS credentials are configured (e.g., via saml2aws) and boto3 is installed: pip install boto3")
             sys.exit(1)
-    
-    def _generate_embeddings(self):
-        """Generate embeddings for all genres in the dataset."""
+
+    def _get_titan_embedding(self, text: str) -> List[float]:
+        """
+        Get embedding for a single text string using Amazon Titan Text Embeddings V2.
+        
+        Args:
+            text (str): The input text to embed.
+            
+        Returns:
+            List[float]: The embedding vector.
+        """
         try:
-            print("🔄 Generating embeddings for all genres...")
+            # Titan Text Embeddings V2 expects a specific JSON structure
+            # For embedding a single string, we use "inputText"
+            body = json.dumps({
+                "inputText": text
+            })
             
-            # Generate embeddings for all genres
-            self.genre_embeddings = self.model.encode(self.genres_list, convert_to_tensor=False)
+            response = self.bedrock_runtime.invoke_model(
+                modelId=self.model_id,
+                body=body,
+                contentType="application/json",
+                accept="application/json"
+            )
             
-            print(f"✅ Generated embeddings for {len(self.genres_list)} genres")
+            response_body = json.loads(response.get('body').read())
+            embedding = response_body.get('embedding')
+            
+            if not embedding:
+                raise ValueError("No embedding found in Titan response.")
+                
+            return embedding
+            
+        except Exception as e:
+            print(f"❌ Error getting Titan embedding for text '{text}': {e}")
+            # Potentially re-raise or handle more gracefully depending on requirements
+            # For now, returning an empty list might cause issues downstream, so logging and re-raising
+            raise
+
+    def _generate_embeddings(self):
+        """Generate embeddings for all genres in the dataset using Titan."""
+        try:
+            print("🔄 Generating embeddings for all genres using Amazon Titan Text Embeddings V2...")
+            
+            embeddings_list = []
+            for i, genre in enumerate(self.genres_list):
+                logging.info(f"Processing genre {i+1}/{len(self.genres_list)}: {genre}")
+                embedding = self._get_titan_embedding(genre)
+                embeddings_list.append(embedding)
+            
+            self.genre_embeddings = np.array(embeddings_list)
+            
+            print(f"✅ Generated embeddings for {len(self.genres_list)} genres using Titan")
             print(f"📊 Embedding dimension: {self.genre_embeddings.shape[1]}")
             
         except Exception as e:
-            print(f"❌ Error generating embeddings: {e}")
+            print(f"❌ Error generating embeddings with Titan: {e}")
             sys.exit(1)
     
     def calculate_similarity(self, input_genre: str, top_k: int = None) -> List[Dict]:
@@ -149,7 +182,8 @@ class GenreSimilarityScorer:
         """
         try:
             # Generate embedding for input genre
-            input_embedding = self.model.encode([input_genre], convert_to_tensor=False)
+            input_embedding_list = self._get_titan_embedding(input_genre)
+            input_embedding = np.array([input_embedding_list]) # Reshape for cosine_similarity
             
             # Calculate cosine similarity with all genre embeddings
             similarities = cosine_similarity(input_embedding, self.genre_embeddings)[0]
@@ -160,6 +194,8 @@ class GenreSimilarityScorer:
                 genre_row = self.genres_df.iloc[i]
                 
                 # Skip if it's the exact same genre (similarity = 1.0)
+                # Note: Titan embeddings might not be exactly 1.0 for identical strings due to normalization,
+                # but it's good practice to keep this check if exact matches are to be excluded.
                 if similarity_score >= 0.999 and genre_row['genre'].lower() == input_genre.lower():
                     continue
                 
@@ -196,10 +232,9 @@ class GenreSimilarityScorer:
             List[Dict]: Filtered and ranked list of similar genres
         """
         # Determine how many genres to fetch initially for similarity calculation
-        # If top_k is None or <= 0, fetch all genres to ensure we consider everything
         num_to_fetch = None
         if top_k is not None and top_k > 0:
-            num_to_fetch = top_k * 2  # Fetch more to allow for filtering, as before
+            num_to_fetch = top_k * 2
         
         # Get similarity scores
         similar_genres = self.calculate_similarity(input_genre, top_k=num_to_fetch)
@@ -210,7 +245,6 @@ class GenreSimilarityScorer:
             if genre['similarity_score'] >= min_similarity
         ]
         
-        # Return top K after filtering if top_k is specified and positive, otherwise return all filtered
         if top_k is not None and top_k > 0:
             return filtered_genres[:top_k]
         else:
@@ -238,18 +272,16 @@ class GenreSimilarityScorer:
         Returns:
             Tuple[bool, List[str]]: (exists, similar_genres_list)
         """
-        # Exact match (case insensitive)
         exact_matches = [genre for genre in self.genres_list 
                         if genre.lower() == input_genre.lower()]
         
         if exact_matches:
             return True, []
         
-        # Partial matches
         partial_matches = [genre for genre in self.genres_list 
                           if input_genre.lower() in genre.lower()]
         
-        return False, partial_matches[:5]  # Return up to 5 suggestions
+        return False, partial_matches[:5]
 
 def print_results(input_genre: str, results: List[Dict]):
     """
@@ -261,7 +293,7 @@ def print_results(input_genre: str, results: List[Dict]):
     """
     print("\n" + "="*80)
     print(f"🎯 GENRE SIMILARITY RESULTS FOR: '{input_genre.upper()}'")
-    print("📊 Ranked by Semantic Similarity (Sentence Transformers)")
+    print("📊 Ranked by Semantic Similarity (Amazon Titan Text Embeddings V2)")
     print("="*80)
     
     if not results:
@@ -277,12 +309,13 @@ def print_results(input_genre: str, results: List[Dict]):
     
     print("-" * 80)
     print(f"📈 Found {len(results)} similar genres")
-    print(f"🔝 Top match: '{results[0]['genre']}' ({results[0]['similarity_score']*100:.2f}% similarity)")
+    if results: # Ensure results is not empty before accessing index 0
+        print(f"🔝 Top match: '{results[0]['genre']}' ({results[0]['similarity_score']*100:.2f}% similarity)")
 
 def main():
     """Main function to run the genre similarity scorer."""
-    print("🎬 Genre Similarity Scorer using Sentence Transformers")
-    print("🤖 Model: all-mpnet-base-v2")
+    print("🎬 Genre Similarity Scorer using Amazon Titan Text Embeddings V2")
+    print("🤖 Model: amazon.titan-embed-text-v2:0")
     print("="*60)
     
     try:
@@ -293,20 +326,16 @@ def main():
         print("🎯 Enter a genre to find semantically similar genres")
         
         while True:
-            # Get user input
             user_input = input("\n🎭 Enter a genre (or 'quit' to exit): ").strip()
             
-            # Check if user wants to exit
             if user_input.lower() in ['quit', 'exit', 'q']:
                 print("\n🎬 Thank you for using the Genre Similarity Scorer!")
                 break
             
-            # Check if input is empty
             if not user_input:
                 print("⚠️  Please enter a valid genre name.")
                 continue
             
-            # Validate genre exists or suggest alternatives
             genre_exists, similar_genres = scorer.validate_genre_exists(user_input)
             
             if not genre_exists and similar_genres:
@@ -333,19 +362,16 @@ def main():
                     print(f"   {i}. {genre}")
                 continue
             
-            # Find similar genres
             print(f"\n🔍 Analyzing semantic similarity for: '{user_input}'")
-            print("⏳ Processing embeddings...")
+            print("⏳ Processing embeddings with Amazon Titan...")
             
             try:
-                # Get similarity results
                 results = scorer.find_similar_genres(
                     input_genre=user_input,
-                    top_k=None,  # Changed to None to get all similar genres
-                    min_similarity=0.2  # 20% minimum similarity
+                    top_k=None,
+                    min_similarity=0.2
                 )
                 
-                # Print results
                 print_results(user_input, results)
                 
             except KeyboardInterrupt:
