@@ -187,7 +187,7 @@ class GenreSimilarityScorerWithDescriptions:
             self.genres_df = pd.read_excel(self.excel_file_path)
             
             # Verify required columns exist
-            required_columns = ['genre']
+            required_columns = ['genre', 'id', 'sum_request', 'sum_response']
             # Check if description column exists
             if 'description' in self.genres_df.columns:
                 required_columns.append('description')
@@ -198,6 +198,25 @@ class GenreSimilarityScorerWithDescriptions:
             
             if missing_columns:
                 raise ValueError(f"Missing required columns: {missing_columns}")
+            
+            # Calculate x and y values based on Excel formulas
+            # x = (unsold_supply / total_unsold_supply) * 100
+            # y = (unsold_supply / sum_request) * 100
+            # where unsold_supply = sum_request - sum_response
+            
+            self.genres_df['unsold_supply_calc'] = self.genres_df['sum_request'] - self.genres_df['sum_response']
+            total_unsold_supply = self.genres_df['unsold_supply_calc'].sum()
+            
+            self.genres_df['x_calc'] = (self.genres_df['unsold_supply_calc'] / total_unsold_supply) * 100
+            self.genres_df['y_calc'] = np.where(
+                self.genres_df['sum_request'] == 0,
+                0,
+                (self.genres_df['unsold_supply_calc'] / self.genres_df['sum_request']) * 100
+            )
+            
+            print(f"📊 Calculated x and y values for all genres")
+            print(f"📈 x range: {self.genres_df['x_calc'].min():.4f} - {self.genres_df['x_calc'].max():.4f}")
+            print(f"📈 y range: {self.genres_df['y_calc'].min():.4f} - {self.genres_df['y_calc'].max():.4f}")
             
             # Clean and prepare genre data
             self.genres_df = self.genres_df.dropna(subset=['genre'])
@@ -468,9 +487,12 @@ class GenreSimilarityScorerWithDescriptions:
                     continue
                 
                 result = {
+                    'id': int(genre_row['id']),
                     'genre': genre_name,
                     'description': genre_description,
-                    'similarity_score': float(similarity_score)
+                    'similarity_score': float(similarity_score),
+                    'x': float(genre_row['x_calc']),
+                    'y': float(genre_row['y_calc'])
                 }
                 results.append(result)
             
@@ -554,6 +576,87 @@ class GenreSimilarityScorerWithDescriptions:
                           if input_genre.lower() in genre.lower()]
         
         return False, partial_matches[:5]  # Return up to 5 suggestions
+    
+    def compute_weighted_average_ranking(self, input_genre: str, top_k: int = 10) -> List[Dict]:
+        """
+        Get similar genres using dynamic threshold and compute weighted average of x and y values.
+        
+        Dynamic threshold = highest_similarity - 20%
+        Example: If highest similarity is 80%, threshold becomes 60%
+        
+        Fallback: If fewer than top_k genres meet the threshold, use top_k genres by similarity.
+        
+        Args:
+            input_genre (str): The genre to find similar genres for
+            top_k (int): Number of top results to return after filtering and ranking (default: 10)
+            
+        Returns:
+            List[Dict]: List of genres with weighted averages, ranked by weighted average
+        """
+        # Get ALL similarity results first (no top_k limit, no min_similarity filter)
+        print(f"🔍 Getting all similarity scores for '{input_genre}'...")
+        all_similar_genres = self.calculate_similarity(input_genre, top_k=None)
+        
+        if not all_similar_genres:
+            print(f"❌ No similar genres found for '{input_genre}'")
+            return []
+        
+        # Find the highest similarity score
+        max_similarity = max(genre['similarity_score'] for genre in all_similar_genres)
+        
+        # Calculate dynamic threshold: highest_similarity - 20%
+        dynamic_threshold = max_similarity - 0.2
+        
+        print(f"📊 Highest similarity: {max_similarity:.4f} ({max_similarity*100:.2f}%)")
+        print(f"🎯 Dynamic threshold: {dynamic_threshold:.4f} ({dynamic_threshold*100:.2f}%)")
+        
+        # Filter genres based on dynamic threshold
+        filtered_genres = [
+            genre for genre in all_similar_genres
+            if genre['similarity_score'] >= dynamic_threshold
+        ]
+        
+        # Fallback strategy: If we don't have enough genres after filtering, take top genres by similarity
+        if len(filtered_genres) < top_k:
+            print(f"⚠️  Only {len(filtered_genres)} genres above dynamic threshold")
+            print(f"🔄 Using fallback: Taking top {top_k} genres by similarity to ensure sufficient results")
+            filtered_genres = all_similar_genres[:top_k]
+        else:
+            print(f"✅ Found {len(filtered_genres)} genres above dynamic threshold")
+        
+        if not filtered_genres:
+            print(f"❌ No genres found for analysis")
+            return []
+        
+        print(f"📋 Using {len(filtered_genres)} genres for weighted average calculation")
+        
+        # Calculate weighted average (50% x + 50% y) for each filtered genre
+        weighted_results = []
+        for genre_data in filtered_genres:
+            weighted_average = (genre_data['x'] * 0.5) + (genre_data['y'] * 0.5)
+            
+            result = {
+                'id': genre_data['id'],
+                'genre': genre_data['genre'],
+                'similarity_score': genre_data['similarity_score'],
+                'x': genre_data['x'],
+                'y': genre_data['y'],
+                'weighted_average': weighted_average
+            }
+            weighted_results.append(result)
+        
+        # Sort by weighted average (descending - highest first)
+        weighted_results.sort(key=lambda x: x['weighted_average'], reverse=True)
+        
+        # Return top K results
+        final_results = weighted_results[:top_k]
+        
+        print(f"🎯 Computed weighted averages for {len(filtered_genres)} genres")
+        print(f"📊 Returning top {len(final_results)} genres ranked by weighted average")
+        if final_results:
+            print(f"📈 Weighted average range: {final_results[-1]['weighted_average']:.4f} - {final_results[0]['weighted_average']:.4f}")
+        
+        return final_results
 
 def print_results(input_genre: str, results: List[Dict]):
     """
@@ -584,6 +687,38 @@ def print_results(input_genre: str, results: List[Dict]):
     print("-" * 80)
     print(f"📈 Found {len(results)} similar genres")
     print(f"🔝 Top match: '{results[0]['genre']}' ({results[0]['similarity_score']*100:.2f}% similarity)")
+
+def print_weighted_average_results(input_genre: str, results: List[Dict]):
+    """
+    Print formatted results of weighted average analysis.
+    
+    Args:
+        input_genre (str): The input genre that was analyzed
+        results (List[Dict]): List of genres with weighted averages, ranked by weighted average
+    """
+    print("\n" + "="*90)
+    print(f"🎯 WEIGHTED AVERAGE RANKING FOR: '{input_genre.upper()}'")
+    print("📊 Genres Filtered by Dynamic Threshold (Highest Similarity - 20%)")
+    print("🏆 Top 10 Results Ranked by Weighted Average (50% x + 50% y)")
+    print("📝 x = % of total unsold supply, y = % unsold supply relative to requests")
+    print("="*90)
+    
+    if not results:
+        print("❌ No genres found for weighted average calculation.")
+        return
+    
+    print(f"{'Rank':<4} {'ID':<4} {'Genre':<25} {'Similarity':<12} {'x':<12} {'y':<12} {'Weighted Avg':<12}")
+    print("-" * 100)
+    
+    for i, result in enumerate(results, 1):
+        similarity_pct = result['similarity_score'] * 100
+        print(f"{i:<4} {result['id']:<4} {result['genre']:<25} {similarity_pct:>8.2f}%  "
+              f"{result['x']:>10.6f}%  {result['y']:>10.6f}%  {result['weighted_average']:>10.6f}%")
+    
+    print("-" * 100)
+    print(f"📈 Analyzed {len(results)} genres")
+    print(f"🏆 Highest weighted average: '{results[0]['genre']}' ({results[0]['weighted_average']:.6f}%)")
+    print(f"🎯 Formula: Weighted Average = (x × 0.5) + (y × 0.5)")
 
 def main():
     """Main function to run the enhanced genre similarity scorer."""
@@ -640,20 +775,20 @@ def main():
                     print(f"   {i}. {genre}")
                 continue
             
-            # Find similar genres
+            # Find similar genres and compute weighted averages
             print(f"\n🔍 Analyzing semantic similarity for: '{user_input}'")
             print("🤖 Processing embeddings and calculating similarities...")
+            print("📊 Computing weighted averages for top 10 similar genres...")
             
             try:
-                # Get similarity results
-                results = scorer.find_similar_genres(
+                # Get weighted average results using dynamic threshold (highest_similarity - 20%)
+                weighted_results = scorer.compute_weighted_average_ranking(
                     input_genre=user_input,
-                    top_k=None,  # Changed to None to get all similar genres
-                    min_similarity=0.2  # 20% minimum similarity
+                    top_k=10  # Top 10 genres ranked by weighted average
                 )
                 
-                # Print results
-                print_results(user_input, results)
+                # Print weighted average results
+                print_weighted_average_results(user_input, weighted_results)
                 
             except KeyboardInterrupt:
                 print("\n\n🛑 Analysis interrupted by user.")
