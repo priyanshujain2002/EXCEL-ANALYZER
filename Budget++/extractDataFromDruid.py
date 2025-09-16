@@ -40,53 +40,122 @@ embedder_config = {
     }
 }
 
+# State abbreviation to full name mapping (case-insensitive)
+state_mapping = {
+    "AA": "Armed Forces Americas",
+    "AE": "Armed Forces Europe, Middle East, & Canada",
+    "AK": "Alaska",
+    "AL": "Alabama",
+    "AP": "Armed Forces Pacific",
+    "AR": "Arkansas",
+    "AS": "American Samoa",
+    "AZ": "Arizona",
+    "CA": "California",
+    "CO": "Colorado",
+    "CT": "Connecticut",
+    "DC": "District of Columbia",
+    "DE": "Delaware",
+    "FL": "Florida",
+    "FM": "Federated States of Micronesia",
+    "GA": "Georgia",
+    "GU": "Guam",
+    "HI": "Hawaii",
+    "IA": "Iowa",
+    "ID": "Idaho",
+    "IL": "Illinois",
+    "IN": "Indiana",
+    "KS": "Kansas",
+    "KY": "Kentucky",
+    "LA": "Louisiana",
+    "MA": "Massachusetts",
+    "MD": "Maryland",
+    "ME": "Maine",
+    "MH": "Marshall Islands",
+    "MI": "Michigan",
+    "MN": "Minnesota",
+    "MO": "Missouri",
+    "MP": "Northern Mariana Islands",
+    "MS": "Mississippi",
+    "MT": "Montana",
+    "NC": "North Carolina",
+    "ND": "North Dakota",
+    "NE": "Nebraska",
+    "NH": "New Hampshire",
+    "NJ": "New Jersey",
+    "NM": "New Mexico",
+    "NV": "Nevada",
+    "NY": "New York",
+    "OH": "Ohio",
+    "OK": "Oklahoma",
+    "OR": "Oregon",
+    "PA": "Pennsylvania",
+    "PW": "Palau",
+    "RI": "Rhode Island",
+    "SC": "South Carolina",
+    "SD": "South Dakota",
+    "TN": "Tennessee",
+    "TX": "Texas",
+    "UT": "Utah",
+    "VA": "Virginia",
+    "VI": "Virgin Islands",
+    "VT": "Vermont",
+    "WA": "Washington",
+    "WI": "Wisconsin",
+    "WV": "West Virginia",
+    "WY": "Wyoming"
+}
+
 url = "https://druid.use1-rprod.k8s.adgear.com/druid/v2/sql"
 
 payload = json.dumps({
     "query": """
-WITH first_split_response AS (
+WITH split_response AS (
     SELECT 
-        CASE 
-            WHEN UPPER(TRIM(genre_individual)) = 'AP' THEN 'Audience Participation'
-            WHEN UPPER(TRIM(genre_individual)) = 'AC' THEN 'Award Ceremonies & Pageants'
-            WHEN UPPER(TRIM(genre_individual)) = 'CP' THEN 'Children''s Programming'
-            WHEN UPPER(TRIM(genre_individual)) = 'CV' THEN 'Comedy Variety'
-            WHEN UPPER(TRIM(genre_individual)) = 'CM' THEN 'Concert Music'
-            WHEN UPPER(TRIM(genre_individual)) = 'CC' THEN 'Conversation, Colloquies'
-            WHEN UPPER(TRIM(genre_individual)) = 'DD' THEN 'Daytime Drama'
-            WHEN UPPER(TRIM(genre_individual)) = 'D' THEN 'Devotional'
-            WHEN UPPER(TRIM(genre_individual)) = 'DO' THEN 'Documentary, General'
-            WHEN UPPER(TRIM(genre_individual)) = 'DN' THEN 'Documentary, News'
-            WHEN UPPER(TRIM(genre_individual)) = 'EA' THEN 'Evening Animation'
-            WHEN UPPER(TRIM(genre_individual)) = 'FF' THEN 'Feature Film'
-            WHEN UPPER(TRIM(genre_individual)) = 'GD' THEN 'General Drama'
-            WHEN UPPER(TRIM(genre_individual)) = 'GV' THEN 'General Variety'
-            WHEN UPPER(TRIM(genre_individual)) = 'IA' THEN 'Instructions, Advice'
-            WHEN UPPER(TRIM(genre_individual)) = 'MD' THEN 'Musical Drama'
-            WHEN UPPER(TRIM(genre_individual)) = 'N' THEN 'News'
-            WHEN UPPER(TRIM(genre_individual)) = 'OP' THEN 'Official Police'
-            WHEN UPPER(TRIM(genre_individual)) = 'P' THEN 'Paid Political'
-            WHEN UPPER(TRIM(genre_individual)) = 'PV' THEN 'Participation Variety'
-            WHEN UPPER(TRIM(genre_individual)) = 'PC' THEN 'Popular Music'
-            WHEN UPPER(TRIM(genre_individual)) = 'PD' THEN 'Private Detective'
-            WHEN UPPER(TRIM(genre_individual)) = 'QG' THEN 'Quiz -Give Away'
-            WHEN UPPER(TRIM(genre_individual)) = 'QP' THEN 'Quiz -Panel'
-            WHEN UPPER(TRIM(genre_individual)) = 'SF' THEN 'Science Fiction'
-            WHEN UPPER(TRIM(genre_individual)) = 'CS' THEN 'Situation Comedy'
-            WHEN UPPER(TRIM(genre_individual)) = 'SA' THEN 'Sports Anthology'
-            WHEN UPPER(TRIM(genre_individual)) = 'SC' THEN 'Sports Commentary'
-            WHEN UPPER(TRIM(genre_individual)) = 'SE' THEN 'Sports Event'
-            WHEN UPPER(TRIM(genre_individual)) = 'SN' THEN 'Sports News'
-            WHEN UPPER(TRIM(genre_individual)) = 'SM' THEN 'Suspense/Mystery'
-            WHEN UPPER(TRIM(genre_individual)) = 'EW' THEN 'Western Drama'
-            ELSE TRIM(genre_individual)
-        END as expanded_genre,
+        LOWER(TRIM(
+            CASE 
+                WHEN UPPER(TRIM(genre_individual)) = 'AP' THEN 'Audience Participation'
+                WHEN UPPER(TRIM(genre_individual)) = 'AC' THEN 'Award Ceremonies & Pageants'
+                WHEN UPPER(TRIM(genre_individual)) = 'CP' THEN 'Children''s Programming'
+                WHEN UPPER(TRIM(genre_individual)) = 'CV' THEN 'Comedy Variety'
+                WHEN UPPER(TRIM(genre_individual)) = 'CM' THEN 'Concert Music'
+                WHEN UPPER(TRIM(genre_individual)) = 'CC' THEN 'Conversation & Colloquies'
+                WHEN UPPER(TRIM(genre_individual)) = 'DD' THEN 'Daytime Drama'
+                WHEN UPPER(TRIM(genre_individual)) = 'D' THEN 'Devotional'
+                WHEN UPPER(TRIM(genre_individual)) = 'DO' THEN 'Documentary & General'
+                WHEN UPPER(TRIM(genre_individual)) = 'DN' THEN 'Documentary & News'
+                WHEN UPPER(TRIM(genre_individual)) = 'EA' THEN 'Evening Animation'
+                WHEN UPPER(TRIM(genre_individual)) = 'FF' THEN 'Feature Film'
+                WHEN UPPER(TRIM(genre_individual)) = 'GD' THEN 'General Drama'
+                WHEN UPPER(TRIM(genre_individual)) = 'GV' THEN 'General Variety'
+                WHEN UPPER(TRIM(genre_individual)) = 'IA' THEN 'Instructions & Advice'
+                WHEN UPPER(TRIM(genre_individual)) = 'MD' THEN 'Musical Drama'
+                WHEN UPPER(TRIM(genre_individual)) = 'N' THEN 'News'
+                WHEN UPPER(TRIM(genre_individual)) = 'OP' THEN 'Official Police'
+                WHEN UPPER(TRIM(genre_individual)) = 'P' THEN 'Paid Political'
+                WHEN UPPER(TRIM(genre_individual)) = 'PV' THEN 'Participation Variety'
+                WHEN UPPER(TRIM(genre_individual)) = 'PC' THEN 'Popular Music'
+                WHEN UPPER(TRIM(genre_individual)) = 'PD' THEN 'Private Detective'
+                WHEN UPPER(TRIM(genre_individual)) = 'QG' THEN 'Quiz -Give Away'
+                WHEN UPPER(TRIM(genre_individual)) = 'QP' THEN 'Quiz -Panel'
+                WHEN UPPER(TRIM(genre_individual)) = 'SF' THEN 'Science Fiction'
+                WHEN UPPER(TRIM(genre_individual)) = 'CS' THEN 'Situation Comedy'
+                WHEN UPPER(TRIM(genre_individual)) = 'SA' THEN 'Sports Anthology'
+                WHEN UPPER(TRIM(genre_individual)) = 'SC' THEN 'Sports Commentary'
+                WHEN UPPER(TRIM(genre_individual)) = 'SE' THEN 'Sports Event'
+                WHEN UPPER(TRIM(genre_individual)) = 'SN' THEN 'Sports News'
+                WHEN UPPER(TRIM(genre_individual)) = 'SM' THEN 'Suspense/Mystery'
+                WHEN UPPER(TRIM(genre_individual)) = 'EW' THEN 'Western Drama'
+                ELSE TRIM(genre_individual)
+            END
+        )) as genre,
         creativetype,
+        de_region,
         "row_count"
     FROM (
         SELECT 
             CASE WHEN genre IS NULL THEN 'Unknown' ELSE genre END as genre,
             creativetype,
+            COALESCE(de_region, 'Unknown') as de_region,
             "row_count"
         FROM "ctv_untargeted_bid_response"
         WHERE 
@@ -97,49 +166,53 @@ WITH first_split_response AS (
     ) CROSS JOIN UNNEST(STRING_TO_ARRAY(genre, ',')) AS t(genre_individual)
     WHERE UPPER(TRIM(genre_individual)) != 'A'
 ),
-first_split_request AS (
+split_request AS (
     SELECT 
-        CASE 
-            WHEN UPPER(TRIM(genre_individual)) = 'AP' THEN 'Audience Participation'
-            WHEN UPPER(TRIM(genre_individual)) = 'AC' THEN 'Award Ceremonies & Pageants'
-            WHEN UPPER(TRIM(genre_individual)) = 'CP' THEN 'Children''s Programming'
-            WHEN UPPER(TRIM(genre_individual)) = 'CV' THEN 'Comedy Variety'
-            WHEN UPPER(TRIM(genre_individual)) = 'CM' THEN 'Concert Music'
-            WHEN UPPER(TRIM(genre_individual)) = 'CC' THEN 'Conversation, Colloquies'
-            WHEN UPPER(TRIM(genre_individual)) = 'DD' THEN 'Daytime Drama'
-            WHEN UPPER(TRIM(genre_individual)) = 'D' THEN 'Devotional'
-            WHEN UPPER(TRIM(genre_individual)) = 'DO' THEN 'Documentary, General'
-            WHEN UPPER(TRIM(genre_individual)) = 'DN' THEN 'Documentary, News'
-            WHEN UPPER(TRIM(genre_individual)) = 'EA' THEN 'Evening Animation'
-            WHEN UPPER(TRIM(genre_individual)) = 'FF' THEN 'Feature Film'
-            WHEN UPPER(TRIM(genre_individual)) = 'GD' THEN 'General Drama'
-            WHEN UPPER(TRIM(genre_individual)) = 'GV' THEN 'General Variety'
-            WHEN UPPER(TRIM(genre_individual)) = 'IA' THEN 'Instructions, Advice'
-            WHEN UPPER(TRIM(genre_individual)) = 'MD' THEN 'Musical Drama'
-            WHEN UPPER(TRIM(genre_individual)) = 'N' THEN 'News'
-            WHEN UPPER(TRIM(genre_individual)) = 'OP' THEN 'Official Police'
-            WHEN UPPER(TRIM(genre_individual)) = 'P' THEN 'Paid Political'
-            WHEN UPPER(TRIM(genre_individual)) = 'PV' THEN 'Participation Variety'
-            WHEN UPPER(TRIM(genre_individual)) = 'PC' THEN 'Popular Music'
-            WHEN UPPER(TRIM(genre_individual)) = 'PD' THEN 'Private Detective'
-            WHEN UPPER(TRIM(genre_individual)) = 'QG' THEN 'Quiz -Give Away'
-            WHEN UPPER(TRIM(genre_individual)) = 'QP' THEN 'Quiz -Panel'
-            WHEN UPPER(TRIM(genre_individual)) = 'SF' THEN 'Science Fiction'
-            WHEN UPPER(TRIM(genre_individual)) = 'CS' THEN 'Situation Comedy'
-            WHEN UPPER(TRIM(genre_individual)) = 'SA' THEN 'Sports Anthology'
-            WHEN UPPER(TRIM(genre_individual)) = 'SC' THEN 'Sports Commentary'
-            WHEN UPPER(TRIM(genre_individual)) = 'SE' THEN 'Sports Event'
-            WHEN UPPER(TRIM(genre_individual)) = 'SN' THEN 'Sports News'
-            WHEN UPPER(TRIM(genre_individual)) = 'SM' THEN 'Suspense/Mystery'
-            WHEN UPPER(TRIM(genre_individual)) = 'EW' THEN 'Western Drama'
-            ELSE TRIM(genre_individual)
-        END as expanded_genre,
+        LOWER(TRIM(
+            CASE 
+                WHEN UPPER(TRIM(genre_individual)) = 'AP' THEN 'Audience Participation'
+                WHEN UPPER(TRIM(genre_individual)) = 'AC' THEN 'Award Ceremonies & Pageants'
+                WHEN UPPER(TRIM(genre_individual)) = 'CP' THEN 'Children''s Programming'
+                WHEN UPPER(TRIM(genre_individual)) = 'CV' THEN 'Comedy Variety'
+                WHEN UPPER(TRIM(genre_individual)) = 'CM' THEN 'Concert Music'
+                WHEN UPPER(TRIM(genre_individual)) = 'CC' THEN 'Conversation & Colloquies'
+                WHEN UPPER(TRIM(genre_individual)) = 'DD' THEN 'Daytime Drama'
+                WHEN UPPER(TRIM(genre_individual)) = 'D' THEN 'Devotional'
+                WHEN UPPER(TRIM(genre_individual)) = 'DO' THEN 'Documentary & General'
+                WHEN UPPER(TRIM(genre_individual)) = 'DN' THEN 'Documentary & News'
+                WHEN UPPER(TRIM(genre_individual)) = 'EA' THEN 'Evening Animation'
+                WHEN UPPER(TRIM(genre_individual)) = 'FF' THEN 'Feature Film'
+                WHEN UPPER(TRIM(genre_individual)) = 'GD' THEN 'General Drama'
+                WHEN UPPER(TRIM(genre_individual)) = 'GV' THEN 'General Variety'
+                WHEN UPPER(TRIM(genre_individual)) = 'IA' THEN 'Instructions, Advice'
+                WHEN UPPER(TRIM(genre_individual)) = 'MD' THEN 'Musical Drama'
+                WHEN UPPER(TRIM(genre_individual)) = 'N' THEN 'News'
+                WHEN UPPER(TRIM(genre_individual)) = 'OP' THEN 'Official Police'
+                WHEN UPPER(TRIM(genre_individual)) = 'P' THEN 'Paid Political'
+                WHEN UPPER(TRIM(genre_individual)) = 'PV' THEN 'Participation Variety'
+                WHEN UPPER(TRIM(genre_individual)) = 'PC' THEN 'Popular Music'
+                WHEN UPPER(TRIM(genre_individual)) = 'PD' THEN 'Private Detective'
+                WHEN UPPER(TRIM(genre_individual)) = 'QG' THEN 'Quiz -Give Away'
+                WHEN UPPER(TRIM(genre_individual)) = 'QP' THEN 'Quiz -Panel'
+                WHEN UPPER(TRIM(genre_individual)) = 'SF' THEN 'Science Fiction'
+                WHEN UPPER(TRIM(genre_individual)) = 'CS' THEN 'Situation Comedy'
+                WHEN UPPER(TRIM(genre_individual)) = 'SA' THEN 'Sports Anthology'
+                WHEN UPPER(TRIM(genre_individual)) = 'SC' THEN 'Sports Commentary'
+                WHEN UPPER(TRIM(genre_individual)) = 'SE' THEN 'Sports Event'
+                WHEN UPPER(TRIM(genre_individual)) = 'SN' THEN 'Sports News'
+                WHEN UPPER(TRIM(genre_individual)) = 'SM' THEN 'Suspense/Mystery'
+                WHEN UPPER(TRIM(genre_individual)) = 'EW' THEN 'Western Drama'
+                ELSE TRIM(genre_individual)
+            END
+        )) as genre,
         creativetype,
+        de_region,
         "row_count"
     FROM (
         SELECT 
             CASE WHEN genre IS NULL THEN 'Unknown' ELSE genre END as genre,
             creativetype,
+            COALESCE(de_region, 'Unknown') as de_region,
             "row_count"
         FROM "ctv_untargeted_bid_request"
         WHERE 
@@ -150,47 +223,35 @@ first_split_request AS (
     ) CROSS JOIN UNNEST(STRING_TO_ARRAY(genre, ',')) AS t(genre_individual)
     WHERE UPPER(TRIM(genre_individual)) != 'A'
 ),
-split_response AS (
-    SELECT 
-        LOWER(TRIM(final_genre)) as genre,
-        creativetype,
-        "row_count"
-    FROM first_split_response
-    CROSS JOIN UNNEST(STRING_TO_ARRAY(expanded_genre, ',')) AS t(final_genre)
-),
-split_request AS (
-    SELECT 
-        LOWER(TRIM(final_genre)) as genre,
-        creativetype,
-        "row_count"
-    FROM first_split_request
-    CROSS JOIN UNNEST(STRING_TO_ARRAY(expanded_genre, ',')) AS t(final_genre)
-),
 cte1 AS (
     SELECT 
         genre,
         creativetype,
+        de_region,
         SUM("row_count") AS sum_response
     FROM split_response
-    GROUP BY 1, 2
+    GROUP BY 1, 2, 3
 ),
 cte2 AS (
     SELECT
         genre,
         creativetype,
+        de_region,
         SUM("row_count") AS sum_request
     FROM split_request
-    GROUP BY 1, 2
+    GROUP BY 1, 2, 3
 )
 SELECT 
     cte1.genre,
     cte1.creativetype,
+    cte1.de_region,
     cte2.sum_request,
     cte1.sum_response
 FROM cte1
 INNER JOIN cte2 
 ON cte1.genre = cte2.genre 
 AND cte1.creativetype = cte2.creativetype
+AND cte1.de_region = cte2.de_region
 """
 })
 headers = {
@@ -203,6 +264,17 @@ response = requests.request("POST", url, headers=headers, data=payload, verify=F
 # Parse JSON response and create dataframe
 data = json.loads(response.text)
 df = pd.DataFrame(data)
+
+# Map state abbreviations to full names (case-insensitive)
+def map_state_name(region_code):
+    if pd.isna(region_code) or region_code == 'Unknown':
+        return 'Unknown'
+    # Convert to uppercase for case-insensitive matching
+    region_code_upper = str(region_code).upper()
+    return state_mapping.get(region_code_upper, region_code)  # Return original if not found
+
+# Apply state mapping to de_region column
+df['de_region'] = df['de_region'].apply(map_state_name)
 
 # Add ID column at the beginning (starting from 1)
 df.insert(0, 'id', range(1, len(df) + 1))
@@ -375,6 +447,18 @@ df.insert(genre_col_pos + 1, 'description', df['genre'].map(descriptions))
 df['description'] = df['description'].fillna('')
 
 print("📝 Added description column to dataframe")
+print(f"📊 Total rows in dataframe: {len(df)}")
+print(f"🔍 Verifying genre descriptions are applied to all rows with same genre:")
+# Check a few sample genres to ensure descriptions are applied correctly
+sample_genres = df['genre'].dropna().unique()[:3]  # Check first 3 genres
+for genre in sample_genres:
+    genre_rows = df[df['genre'] == genre]
+    unique_descriptions = genre_rows['description'].unique()
+    print(f"   Genre '{genre}': {len(genre_rows)} rows, {len(unique_descriptions)} unique description(s)")
+    if len(unique_descriptions) == 1:
+        print(f"   ✅ All rows have the same description: '{unique_descriptions[0]}'")
+    else:
+        print(f"   ❌ Multiple descriptions found: {unique_descriptions}")
 
 # Create Excel file with formulas and sorting
 excel_filename = "knowledge/druid_query_results_with_descriptions.xlsx"
@@ -391,13 +475,13 @@ df_sorted = df.sort_values('x_calc', ascending=False).reset_index(drop=True)
 wb = Workbook()
 ws = wb.active
 
-# Add headers (now including description)
-headers = ['id', 'genre', 'description', 'creativetype', 'sum_request', 'sum_response', 'unsold_supply', 'x', 'y']
+# Add headers (now including description and region)
+headers = ['id', 'genre', 'description', 'creativetype', 'de_region', 'sum_request', 'sum_response', 'unsold_supply', 'x', 'y']
 ws.append(headers)
 
 # Add sorted data rows
 for i, (_, row) in enumerate(df_sorted.iterrows(), 2):
-    ws.append([i-1, row['genre'], row['description'], row['creativetype'], row['sum_request'], row['sum_response'], '', '', ''])
+    ws.append([i-1, row['genre'], row['description'], row['creativetype'], row['de_region'], row['sum_request'], row['sum_response'], '', '', ''])
 
 # Add Excel formulas to new columns
 total_rows = len(df_sorted) + 1
@@ -405,14 +489,14 @@ for row in range(2, total_rows + 1):
     # Update ID to sequential
     ws[f'A{row}'] = row - 1
     
-    # Column G: Unsold Supply = sum_request - sum_response
-    ws[f'G{row}'] = f'=E{row}-F{row}'
+    # Column H: Unsold Supply = sum_request - sum_response (now column H because we added de_region)
+    ws[f'H{row}'] = f'=F{row}-G{row}'
     
-    # Column H: X = (Unsold supply of that type/Sum of all unsold supply)*100
-    ws[f'H{row}'] = f'=IF(SUM(G$2:G${total_rows})=0,0,(G{row}/SUM(G$2:G${total_rows}))*100)'
+    # Column I: X = (Unsold supply of that type/Sum of all unsold supply)*100
+    ws[f'I{row}'] = f'=IF(SUM(H$2:H${total_rows})=0,0,(H{row}/SUM(H$2:H${total_rows}))*100)'
     
-    # Column I: Y = (Unsold supply of that type / sum_request of that type)*100
-    ws[f'I{row}'] = f'=IF(E{row}=0,0,(G{row}/E{row})*100)'
+    # Column J: Y = (Unsold supply of that type / sum_request of that type)*100
+    ws[f'J{row}'] = f'=IF(F{row}=0,0,(H{row}/F{row})*100)'
 
 # Ensure the knowledge directory exists
 os.makedirs("Budget++/knowledge", exist_ok=True)

@@ -581,14 +581,15 @@ class GenreSimilarityScorerWithDescriptions:
         """
         Get similar genres using dynamic threshold and compute weighted average of x and y values.
         
-        Dynamic threshold = highest_similarity - 20%
-        Example: If highest similarity is 80%, threshold becomes 60%
+        Dynamic threshold = highest_similarity - 30%
+        Example: If highest similarity is 80%, threshold becomes 50%
         
-        Fallback: If fewer than top_k genres meet the threshold, use top_k genres by similarity.
+        Only returns genres that meet the threshold (no fallback logic).
+        If more than top_k genres meet threshold, returns top_k by weighted average.
         
         Args:
             input_genre (str): The genre to find similar genres for
-            top_k (int): Number of top results to return after filtering and ranking (default: 10)
+            top_k (int): Maximum number of results to return (default: 10)
             
         Returns:
             List[Dict]: List of genres with weighted averages, ranked by weighted average
@@ -604,31 +605,23 @@ class GenreSimilarityScorerWithDescriptions:
         # Find the highest similarity score
         max_similarity = max(genre['similarity_score'] for genre in all_similar_genres)
         
-        # Calculate dynamic threshold: highest_similarity - 20%
-        dynamic_threshold = max_similarity - 0.2
+        # Calculate dynamic threshold: highest_similarity - 30%
+        dynamic_threshold = max_similarity - 0.3
         
         print(f"📊 Highest similarity: {max_similarity:.4f} ({max_similarity*100:.2f}%)")
         print(f"🎯 Dynamic threshold: {dynamic_threshold:.4f} ({dynamic_threshold*100:.2f}%)")
         
-        # Filter genres based on dynamic threshold
+        # Filter genres based on dynamic threshold (no fallback)
         filtered_genres = [
             genre for genre in all_similar_genres
             if genre['similarity_score'] >= dynamic_threshold
         ]
         
-        # Fallback strategy: If we don't have enough genres after filtering, take top genres by similarity
-        if len(filtered_genres) < top_k:
-            print(f"⚠️  Only {len(filtered_genres)} genres above dynamic threshold")
-            print(f"🔄 Using fallback: Taking top {top_k} genres by similarity to ensure sufficient results")
-            filtered_genres = all_similar_genres[:top_k]
-        else:
-            print(f"✅ Found {len(filtered_genres)} genres above dynamic threshold")
-        
         if not filtered_genres:
-            print(f"❌ No genres found for analysis")
+            print(f"❌ No genres found above dynamic threshold {dynamic_threshold:.4f}")
             return []
         
-        print(f"📋 Using {len(filtered_genres)} genres for weighted average calculation")
+        print(f"✅ Found {len(filtered_genres)} genres above dynamic threshold")
         
         # Calculate weighted average (50% x + 50% y) for each filtered genre
         weighted_results = []
@@ -648,11 +641,11 @@ class GenreSimilarityScorerWithDescriptions:
         # Sort by weighted average (descending - highest first)
         weighted_results.sort(key=lambda x: x['weighted_average'], reverse=True)
         
-        # Return top K results
+        # Return top K results (or all if fewer than top_k)
         final_results = weighted_results[:top_k]
         
         print(f"🎯 Computed weighted averages for {len(filtered_genres)} genres")
-        print(f"📊 Returning top {len(final_results)} genres ranked by weighted average")
+        print(f"📊 Returning {len(final_results)} genres ranked by weighted average")
         if final_results:
             print(f"📈 Weighted average range: {final_results[-1]['weighted_average']:.4f} - {final_results[0]['weighted_average']:.4f}")
         
@@ -698,8 +691,8 @@ def print_weighted_average_results(input_genre: str, results: List[Dict]):
     """
     print("\n" + "="*90)
     print(f"🎯 WEIGHTED AVERAGE RANKING FOR: '{input_genre.upper()}'")
-    print("📊 Genres Filtered by Dynamic Threshold (Highest Similarity - 20%)")
-    print("🏆 Top 10 Results Ranked by Weighted Average (50% x + 50% y)")
+    print("📊 Genres Filtered by Dynamic Threshold (Highest Similarity - 30%)")
+    print("🏆 Results Ranked by Weighted Average (50% x + 50% y)")
     print("📝 x = % of total unsold supply, y = % unsold supply relative to requests")
     print("="*90)
     
