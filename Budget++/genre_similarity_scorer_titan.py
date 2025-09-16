@@ -187,7 +187,7 @@ class GenreSimilarityScorerWithDescriptions:
             self.genres_df = pd.read_excel(self.excel_file_path)
             
             # Verify required columns exist
-            required_columns = ['genre', 'id', 'sum_request', 'sum_response']
+            required_columns = ['genre_updated', 'id', 'sum_request', 'sum_response']
             # Check if description column exists
             if 'description' in self.genres_df.columns:
                 required_columns.append('description')
@@ -219,19 +219,19 @@ class GenreSimilarityScorerWithDescriptions:
             print(f"📈 y range: {self.genres_df['y_calc'].min():.4f} - {self.genres_df['y_calc'].max():.4f}")
             
             # Clean and prepare genre data
-            self.genres_df = self.genres_df.dropna(subset=['genre'])
-            self.genres_df['genre'] = self.genres_df['genre'].astype(str).str.strip()
+            self.genres_df = self.genres_df.dropna(subset=['genre_updated'])
+            self.genres_df['genre_updated'] = self.genres_df['genre_updated'].astype(str).str.strip()
             
             # Remove duplicates based on genre name
-            self.genres_df = self.genres_df.drop_duplicates(subset=['genre'], keep='first')
+            self.genres_df = self.genres_df.drop_duplicates(subset=['genre_updated'], keep='first')
             
             # Create list of genres for embedding
-            self.genres_list = self.genres_df['genre'].tolist()
+            self.genres_list = self.genres_df['genre_updated'].tolist()
             
             # Load descriptions from Excel
             if 'description' in self.genres_df.columns:
                 for _, row in self.genres_df.iterrows():
-                    genre = row['genre']
+                    genre = row['genre_updated']
                     description = str(row['description']).strip()
                     if description and description != 'nan':
                         self.genre_descriptions[genre] = description
@@ -479,7 +479,7 @@ class GenreSimilarityScorerWithDescriptions:
             results = []
             for i, similarity_score in enumerate(similarities):
                 genre_row = self.genres_df.iloc[i]
-                genre_name = genre_row['genre']
+                genre_name = genre_row['genre_updated']
                 genre_description = self.genre_descriptions.get(genre_name, "")
                 
                 # Skip if it's the exact same genre (similarity = 1.0)

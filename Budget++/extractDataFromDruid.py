@@ -111,6 +111,7 @@ payload = json.dumps({
     "query": """
 WITH split_response AS (
     SELECT 
+        LOWER(TRIM(genre_individual)) as genre,
         LOWER(TRIM(
             CASE 
                 WHEN UPPER(TRIM(genre_individual)) = 'AP' THEN 'Audience Participation'
@@ -147,19 +148,21 @@ WITH split_response AS (
                 WHEN UPPER(TRIM(genre_individual)) = 'EW' THEN 'Western Drama'
                 ELSE TRIM(genre_individual)
             END
-        )) as genre,
+        )) as genre_updated,
         creativetype,
         de_region,
+        de_country,
         "row_count"
     FROM (
         SELECT 
             CASE WHEN genre IS NULL THEN 'Unknown' ELSE genre END as genre,
             creativetype,
             COALESCE(de_region, 'Unknown') as de_region,
+            COALESCE(de_country, 'Unknown') as de_country,
             "row_count"
         FROM "ctv_untargeted_bid_response"
         WHERE 
-            country = 'US'
+            de_country = 'US'
             AND exchange_id = 55
             AND __time >= '2025-09-03T00:00:00.000Z'
             AND __time <= '2025-09-09T00:00:00.000Z'
@@ -168,6 +171,7 @@ WITH split_response AS (
 ),
 split_request AS (
     SELECT 
+        LOWER(TRIM(genre_individual)) as genre,
         LOWER(TRIM(
             CASE 
                 WHEN UPPER(TRIM(genre_individual)) = 'AP' THEN 'Audience Participation'
@@ -184,7 +188,7 @@ split_request AS (
                 WHEN UPPER(TRIM(genre_individual)) = 'FF' THEN 'Feature Film'
                 WHEN UPPER(TRIM(genre_individual)) = 'GD' THEN 'General Drama'
                 WHEN UPPER(TRIM(genre_individual)) = 'GV' THEN 'General Variety'
-                WHEN UPPER(TRIM(genre_individual)) = 'IA' THEN 'Instructions, Advice'
+                WHEN UPPER(TRIM(genre_individual)) = 'IA' THEN 'Instructions & Advice'
                 WHEN UPPER(TRIM(genre_individual)) = 'MD' THEN 'Musical Drama'
                 WHEN UPPER(TRIM(genre_individual)) = 'N' THEN 'News'
                 WHEN UPPER(TRIM(genre_individual)) = 'OP' THEN 'Official Police'
@@ -204,20 +208,22 @@ split_request AS (
                 WHEN UPPER(TRIM(genre_individual)) = 'EW' THEN 'Western Drama'
                 ELSE TRIM(genre_individual)
             END
-        )) as genre,
+        )) as genre_updated,
         creativetype,
         de_region,
+        de_country,
         "row_count"
     FROM (
         SELECT 
             CASE WHEN genre IS NULL THEN 'Unknown' ELSE genre END as genre,
             creativetype,
             COALESCE(de_region, 'Unknown') as de_region,
+            COALESCE(de_country, 'Unknown') as de_country,
             "row_count"
         FROM "ctv_untargeted_bid_request"
         WHERE 
             exchange_id = 55
-            AND country = 'US'
+            AND de_country = 'US'
             AND __time >= '2025-09-03T00:00:00.000Z'
             AND __time <= '2025-09-09T00:00:00.000Z'
     ) CROSS JOIN UNNEST(STRING_TO_ARRAY(genre, ',')) AS t(genre_individual)
@@ -226,25 +232,31 @@ split_request AS (
 cte1 AS (
     SELECT 
         genre,
+        genre_updated,
         creativetype,
         de_region,
+        de_country,
         SUM("row_count") AS sum_response
     FROM split_response
-    GROUP BY 1, 2, 3
+    GROUP BY 1, 2, 3, 4, 5
 ),
 cte2 AS (
     SELECT
         genre,
+        genre_updated,
         creativetype,
         de_region,
+        de_country,
         SUM("row_count") AS sum_request
     FROM split_request
-    GROUP BY 1, 2, 3
+    GROUP BY 1, 2, 3, 4, 5
 )
 SELECT 
     cte1.genre,
+    cte1.genre_updated,
     cte1.creativetype,
     cte1.de_region,
+    cte1.de_country,
     cte2.sum_request,
     cte1.sum_response
 FROM cte1
@@ -252,6 +264,7 @@ INNER JOIN cte2
 ON cte1.genre = cte2.genre 
 AND cte1.creativetype = cte2.creativetype
 AND cte1.de_region = cte2.de_region
+AND cte1.de_country = cte2.de_country
 """
 })
 headers = {
@@ -265,6 +278,17 @@ response = requests.request("POST", url, headers=headers, data=payload, verify=F
 data = json.loads(response.text)
 df = pd.DataFrame(data)
 
+# Debug: Print the columns in the dataframe
+print("🔍 Dataframe columns:", df.columns.tolist())
+
+# If there's an error, print the error details
+if 'error' in df.columns:
+    print("❌ SQL Error detected:")
+    print("Error:", df.iloc[0]['error'])
+    print("Error Code:", df.iloc[0]['errorCode'])
+    print("Error Message:", df.iloc[0]['errorMessage'])
+    exit(1)
+
 # Map state abbreviations to full names (case-insensitive)
 def map_state_name(region_code):
     if pd.isna(region_code) or region_code == 'Unknown':
@@ -273,8 +297,9 @@ def map_state_name(region_code):
     region_code_upper = str(region_code).upper()
     return state_mapping.get(region_code_upper, region_code)  # Return original if not found
 
-# Apply state mapping to de_region column
-df['de_region'] = df['de_region'].apply(map_state_name)
+# Create de_region_updated column with state mapping applied
+# Keep the original de_region column unchanged
+df['de_region_updated'] = df['de_region'].apply(map_state_name)
 
 # Add ID column at the beginning (starting from 1)
 df.insert(0, 'id', range(1, len(df) + 1))
@@ -282,8 +307,8 @@ df.insert(0, 'id', range(1, len(df) + 1))
 print("✅ Dataframe created successfully:")
 print(df)
 
-# Extract unique genres directly from dataframe (since they're already unique)
-unique_genres = df['genre'].dropna().unique().tolist()
+# Extract unique genres directly from dataframe (using genre_updated column)
+unique_genres = df['genre_updated'].dropna().unique().tolist()
 print(f"📋 Found {len(unique_genres)} unique genres")
 
 # Create the genre description agent
@@ -442,7 +467,7 @@ print(f"✅ Successfully generated {len(descriptions)} genre descriptions")
 # Find the position of genre column
 genre_col_pos = df.columns.get_loc('genre')
 # Insert description column right after genre column
-df.insert(genre_col_pos + 1, 'description', df['genre'].map(descriptions))
+df.insert(genre_col_pos + 1, 'description', df['genre_updated'].map(descriptions))
 # Fill any NaN values with empty string
 df['description'] = df['description'].fillna('')
 
@@ -475,13 +500,13 @@ df_sorted = df.sort_values('x_calc', ascending=False).reset_index(drop=True)
 wb = Workbook()
 ws = wb.active
 
-# Add headers (now including description and region)
-headers = ['id', 'genre', 'description', 'creativetype', 'de_region', 'sum_request', 'sum_response', 'unsold_supply', 'x', 'y']
+# Add headers (now including original and updated columns for genre, de_region, and de_country)
+headers = ['id', 'genre', 'genre_updated', 'description', 'creativetype', 'de_region', 'de_region_updated', 'de_country', 'sum_request', 'sum_response', 'unsold_supply', 'x', 'y']
 ws.append(headers)
 
 # Add sorted data rows
 for i, (_, row) in enumerate(df_sorted.iterrows(), 2):
-    ws.append([i-1, row['genre'], row['description'], row['creativetype'], row['de_region'], row['sum_request'], row['sum_response'], '', '', ''])
+    ws.append([i-1, row['genre'], row['genre_updated'], row['description'], row['creativetype'], row['de_region'], row['de_region_updated'], row['de_country'], row['sum_request'], row['sum_response'], '', '', ''])
 
 # Add Excel formulas to new columns
 total_rows = len(df_sorted) + 1
@@ -489,14 +514,14 @@ for row in range(2, total_rows + 1):
     # Update ID to sequential
     ws[f'A{row}'] = row - 1
     
-    # Column H: Unsold Supply = sum_request - sum_response (now column H because we added de_region)
-    ws[f'H{row}'] = f'=F{row}-G{row}'
+    # Column K: Unsold Supply = sum_request - sum_response (now column K because we added genre_updated, de_region_updated, and de_country)
+    ws[f'K{row}'] = f'=I{row}-J{row}'
     
-    # Column I: X = (Unsold supply of that type/Sum of all unsold supply)*100
-    ws[f'I{row}'] = f'=IF(SUM(H$2:H${total_rows})=0,0,(H{row}/SUM(H$2:H${total_rows}))*100)'
+    # Column L: X = (Unsold supply of that type/Sum of all unsold supply)*100
+    ws[f'L{row}'] = f'=IF(SUM(K$2:K${total_rows})=0,0,(K{row}/SUM(K$2:K${total_rows}))*100)'
     
-    # Column J: Y = (Unsold supply of that type / sum_request of that type)*100
-    ws[f'J{row}'] = f'=IF(F{row}=0,0,(H{row}/F{row})*100)'
+    # Column M: Y = (Unsold supply of that type / sum_request of that type)*100
+    ws[f'M{row}'] = f'=IF(I{row}=0,0,(K{row}/I{row})*100)'
 
 # Ensure the knowledge directory exists
 os.makedirs("Budget++/knowledge", exist_ok=True)
