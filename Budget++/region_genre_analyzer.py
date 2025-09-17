@@ -87,7 +87,7 @@ class RegionGenreAnalyzer:
         self.successful_regions = None
         self.cache = {}
         
-        # Genre analysis components  
+        # Genre analysis components
         self.model_id = "amazon.titan-embed-text-v2:0"
         self.bedrock_runtime = None
         self.genres_df = None
@@ -96,6 +96,9 @@ class RegionGenreAnalyzer:
         self.genres_list = None
         self.filtered_genres_list = None
         self.genre_descriptions = {}
+        
+        # Lazy loading cache for embeddings
+        self.embedding_cache = {}
         
         # AWS/CrewAI components
         self.llm = None
@@ -108,12 +111,9 @@ class RegionGenreAnalyzer:
         self._initialize_aws_components()
         self._geocode_all_regions()
         self._calculate_distance_matrix()
-        self._generate_embeddings()
-        
-        # Create a mapping from genre names to their indices in the embedding matrix
-        self.genre_to_index = {genre: i for i, genre in enumerate(self.genres_list)}
         
         logging.info("RegionGenreAnalyzer initialized successfully")
+        print("🚀 Fast initialization complete! Embeddings will be generated on-demand.")
     
     def _load_cache(self) -> None:
         """Load geocoding cache from file if it exists."""
@@ -630,6 +630,23 @@ class RegionGenreAnalyzer:
         """Generate a simple fallback description when CrewAI fails or no description exists."""
         return f"A {genre_name} genre characterized by its distinctive {genre_name} elements and style."
     
+    def _get_or_compute_embedding(self, genre: str) -> List[float]:
+        """Get embedding from cache or compute if not exists (lazy loading)."""
+        if genre not in self.embedding_cache:
+            # Check if genre exists in our dataset
+            if genre in self.genre_descriptions:
+                description = self.genre_descriptions[genre]
+            else:
+                # Generate description for new input genre
+                description = self._generate_genre_description(genre)
+                # Cache the description for future use
+                self.genre_descriptions[genre] = description
+            
+            combined_text = f"{genre}: {description}"
+            embedding = self._get_titan_embedding(combined_text)
+            self.embedding_cache[genre] = embedding
+        return self.embedding_cache[genre]
+    
     def _generate_embeddings(self):
         """Generate embeddings for all genre names and their descriptions combined using Titan."""
         try:
@@ -659,58 +676,46 @@ class RegionGenreAnalyzer:
             raise
     
     def _generate_embeddings_for_filtered_data(self, filtered_data: pd.DataFrame):
-        """Extract embeddings for filtered genres using pre-computed embeddings."""
+        """Generate embeddings for filtered genres using lazy loading with caching."""
         try:
-            print("🔄 Extracting embeddings for filtered genre data from pre-computed embeddings...")
+            print("🔄 Getting embeddings for filtered genre data...")
             
             # Get unique genres from filtered data
             filtered_genres = filtered_data['genre_updated'].unique().tolist()
             
-            # Find indices of filtered genres in the original genres list
-            embedding_indices = []
+            # Get embeddings using lazy loading (from cache or compute on-demand)
+            embeddings_list = []
             valid_filtered_genres = []
             
             for genre in filtered_genres:
-                if genre in self.genre_to_index:
-                    idx = self.genre_to_index[genre]
-                    embedding_indices.append(idx)
+                try:
+                    embedding = self._get_or_compute_embedding(genre)
+                    embeddings_list.append(embedding)
                     valid_filtered_genres.append(genre)
-                else:
-                    logging.warning(f"Genre '{genre}' not found in pre-computed embeddings")
+                except Exception as e:
+                    logging.warning(f"Failed to get embedding for genre '{genre}': {e}")
+                    continue
             
-            if embedding_indices:
-                # Extract embeddings using indices from pre-computed embeddings
-                self.filtered_genre_embeddings = self.genre_embeddings[embedding_indices]
+            if embeddings_list:
+                self.filtered_genre_embeddings = np.array(embeddings_list)
                 self.filtered_genres_list = valid_filtered_genres
                 
-                print(f"✅ Extracted embeddings for {len(valid_filtered_genres)} filtered genres")
-                print(f"📊 Filtered embedding dimension: {self.filtered_genre_embeddings.shape[1]}")
+                print(f"✅ Ready with embeddings for {len(valid_filtered_genres)} filtered genres")
+                print(f"📊 Embedding dimension: {self.filtered_genre_embeddings.shape[1]}")
             else:
-                logging.warning("No valid genres found in filtered data")
+                logging.warning("No valid embeddings generated for filtered data")
                 self.filtered_genre_embeddings = np.array([])
                 self.filtered_genres_list = []
             
         except Exception as e:
-            logging.error(f"Error extracting filtered embeddings: {e}")
+            logging.error(f"Error generating filtered embeddings: {e}")
             raise
     
     def _calculate_similarity_on_filtered_data(self, input_genre: str, filtered_data: pd.DataFrame) -> List[Dict]:
         """Calculate similarity scores using filtered genre data."""
         try:
-            # Check if input genre exists in our dataset
-            if input_genre in self.genre_descriptions:
-                input_description = self.genre_descriptions[input_genre]
-                print(f"📝 Using existing description for '{input_genre}'")
-            else:
-                # Generate description for new input genre
-                print(f"🤖 Generating description for new input genre: '{input_genre}'")
-                input_description = self._generate_genre_description(input_genre)
-            
-            # Combine input genre with its description for embedding
-            input_combined_text = f"{input_genre}: {input_description}"
-            
-            # Generate embedding for combined genre+description text using Titan
-            input_embedding_list = self._get_titan_embedding(input_combined_text)
+            # Get embedding for input genre using lazy loading
+            input_embedding_list = self._get_or_compute_embedding(input_genre)
             input_embedding = np.array([input_embedding_list])  # Reshape for cosine_similarity
             
             # Calculate cosine similarity with filtered genre+description embeddings
