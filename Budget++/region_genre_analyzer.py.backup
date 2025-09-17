@@ -110,9 +110,6 @@ class RegionGenreAnalyzer:
         self._calculate_distance_matrix()
         self._generate_embeddings()
         
-        # Create a mapping from genre names to their indices in the embedding matrix
-        self.genre_to_index = {genre: i for i, genre in enumerate(self.genres_list)}
-        
         logging.info("RegionGenreAnalyzer initialized successfully")
     
     def _load_cache(self) -> None:
@@ -659,39 +656,34 @@ class RegionGenreAnalyzer:
             raise
     
     def _generate_embeddings_for_filtered_data(self, filtered_data: pd.DataFrame):
-        """Extract embeddings for filtered genres using pre-computed embeddings."""
+        """Generate embeddings only for filtered genre data."""
         try:
-            print("🔄 Extracting embeddings for filtered genre data from pre-computed embeddings...")
+            print("🔄 Generating embeddings for filtered genre data...")
             
             # Get unique genres from filtered data
             filtered_genres = filtered_data['genre_updated'].unique().tolist()
             
-            # Find indices of filtered genres in the original genres list
-            embedding_indices = []
-            valid_filtered_genres = []
-            
+            # Combine genre name with description for each genre
+            combined_texts = []
             for genre in filtered_genres:
-                if genre in self.genre_to_index:
-                    idx = self.genre_to_index[genre]
-                    embedding_indices.append(idx)
-                    valid_filtered_genres.append(genre)
-                else:
-                    logging.warning(f"Genre '{genre}' not found in pre-computed embeddings")
+                description = self.genre_descriptions.get(genre, self._generate_fallback_description(genre))
+                combined_text = f"{genre}: {description}"
+                combined_texts.append(combined_text)
             
-            if embedding_indices:
-                # Extract embeddings using indices from pre-computed embeddings
-                self.filtered_genre_embeddings = self.genre_embeddings[embedding_indices]
-                self.filtered_genres_list = valid_filtered_genres
-                
-                print(f"✅ Extracted embeddings for {len(valid_filtered_genres)} filtered genres")
-                print(f"📊 Filtered embedding dimension: {self.filtered_genre_embeddings.shape[1]}")
-            else:
-                logging.warning("No valid genres found in filtered data")
-                self.filtered_genre_embeddings = np.array([])
-                self.filtered_genres_list = []
+            # Generate embeddings using Titan
+            embeddings_list = []
+            for combined_text in combined_texts:
+                embedding = self._get_titan_embedding(combined_text)
+                embeddings_list.append(embedding)
+            
+            self.filtered_genre_embeddings = np.array(embeddings_list)
+            self.filtered_genres_list = filtered_genres
+            
+            print(f"✅ Generated embeddings for {len(filtered_genres)} filtered genres")
+            print(f"📊 Filtered embedding dimension: {self.filtered_genre_embeddings.shape[1]}")
             
         except Exception as e:
-            logging.error(f"Error extracting filtered embeddings: {e}")
+            logging.error(f"Error generating filtered embeddings: {e}")
             raise
     
     def _calculate_similarity_on_filtered_data(self, input_genre: str, filtered_data: pd.DataFrame) -> List[Dict]:
