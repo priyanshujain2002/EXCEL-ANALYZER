@@ -157,8 +157,8 @@ WITH split_response AS (
         SELECT 
             CASE WHEN genre IS NULL THEN 'Unknown' ELSE genre END as genre,
             creativetype,
-            COALESCE(de_region, 'Unknown') as de_region,
-            COALESCE(de_country, 'Unknown') as de_country,
+            de_region,
+            de_country,
             "row_count"
         FROM "ctv_untargeted_bid_response"
         WHERE 
@@ -217,8 +217,8 @@ split_request AS (
         SELECT 
             CASE WHEN genre IS NULL THEN 'Unknown' ELSE genre END as genre,
             creativetype,
-            COALESCE(de_region, 'Unknown') as de_region,
-            COALESCE(de_country, 'Unknown') as de_country,
+            de_region,
+            de_country,
             "row_count"
         FROM "ctv_untargeted_bid_request"
         WHERE 

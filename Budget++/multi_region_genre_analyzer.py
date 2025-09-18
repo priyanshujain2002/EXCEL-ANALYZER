@@ -1,29 +1,31 @@
 #!/usr/bin/env python3
 """
-Region-Genre Analyzer
+Multi-Region Multi-Genre Analyzer
 
-This script integrates region distance analysis with genre similarity scoring.
-It first filters data based on the top 20 nearby regions, then runs genre similarity
-analysis on the filtered data, providing enhanced results with both geographic
-and semantic insights.
+This script extends the region-genre analysis to handle multiple input regions and genres.
+It finds regions that are geographically close to ALL input regions, aggregates data by genre,
+and runs separate similarity analysis for each input genre.
 
-Features:
-- Unified data loading from Excel file
-- Region distance calculation with geocoding
-- Automatic data filtering by top 20 nearby regions
-- Genre similarity analysis using Amazon Titan Text Embeddings V2
-- CrewAI integration for genre descriptions
-- Business metrics calculation (x, y values)
-- Enhanced results with region and genre information
+Key Features:
+- Multiple region input processing (comma-separated)
+- Multi-region proximity algorithm (finds regions near ALL inputs)
+- Data aggregation by genre with proper business metrics calculation
+- Multiple genre input processing (comma-separated)
+- Separate similarity analysis for each input genre
+- Enhanced results with region information display
+
+New Workflow:
+1. Input: Multiple regions → Find common nearby regions → Display selected regions
+2. Filter data by selected regions → Group by genre → Aggregate metrics
+3. Input: Multiple genres → Run similarity analysis per genre → Return separate results
 """
 
 import os
-
 import pandas as pd
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import sys
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Any
 import warnings
 import ssl
 import requests
@@ -44,8 +46,6 @@ from crewai import Agent, Task, Crew, LLM
 from crewai.knowledge.source.excel_knowledge_source import ExcelKnowledgeSource
 import boto3
 
-# Remove all SSL configuration - use default settings
-
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore')
 
@@ -53,15 +53,16 @@ warnings.filterwarnings('ignore')
 logging.basicConfig(level=logging.WARNING)
 logging.getLogger("crewai").setLevel(logging.WARNING)
 
-class RegionGenreAnalyzer:
+class MultiRegionGenreAnalyzer:
     """
-    Integrated analyzer that combines region distance filtering with genre similarity analysis.
+    Multi-Region Multi-Genre Analyzer that handles multiple input regions and genres.
+    Finds regions near ALL input regions and runs separate similarity analysis for each genre.
     """
     
     def __init__(self, excel_file_path: str = "knowledge/druid_query_results_with_descriptions.xlsx", 
                  cache_file: str = "geocoding_cache.pkl"):
         """
-        Initialize the Region-Genre Analyzer.
+        Initialize the Multi-Region Multi-Genre Analyzer.
         
         Args:
             excel_file_path (str): Path to the Excel file containing region and genre data
@@ -71,9 +72,8 @@ class RegionGenreAnalyzer:
         self.cache_file = cache_file
         
         # Region analysis components
-        # Initialize Nominatim without session parameter (not supported in all versions)
         self.geolocator = Nominatim(
-            user_agent="region_genre_analyzer",
+            user_agent="multi_region_genre_analyzer",
             timeout=10
         )
         self.geocode = RateLimiter(self.geolocator.geocode, min_delay_seconds=1)
@@ -87,11 +87,14 @@ class RegionGenreAnalyzer:
         self.model_id = "amazon.titan-embed-text-v2:0"
         self.bedrock_runtime = None
         self.genres_df = None
+        self.original_genres_df = None  # Keep original for global calculations
+        self.aggregated_genres_df = None  # Aggregated data
         self.genre_embeddings = None
-        self.filtered_genre_embeddings = None
         self.genres_list = None
-        self.filtered_genres_list = None
         self.genre_descriptions = {}
+        
+        # Global business metrics (from original complete dataset)
+        self.global_total_unsold_supply = 0
         
         # Lazy loading cache for embeddings
         self.embedding_cache = {}
@@ -108,8 +111,8 @@ class RegionGenreAnalyzer:
         self._geocode_all_regions()
         self._calculate_distance_matrix()
         
-        logging.info("RegionGenreAnalyzer initialized successfully")
-        print("🚀 Fast initialization complete! Embeddings will be generated on-demand.")
+        logging.info("MultiRegionGenreAnalyzer initialized successfully")
+        print("🚀 Multi-Region Multi-Genre Analyzer initialized! Ready for analysis.")
     
     def _load_cache(self) -> None:
         """Load geocoding cache from file if it exists."""
@@ -157,9 +160,10 @@ class RegionGenreAnalyzer:
             
             # Keep the full dataset with regional context
             self.genres_df = df[genre_columns].copy()
+            self.original_genres_df = self.genres_df.copy()  # Keep original for global calculations
             
-            # Calculate business metrics (x, y values)
-            self._calculate_business_metrics()
+            # Calculate global business metrics from original complete dataset
+            self._calculate_global_business_metrics()
             
             # Clean and prepare both datasets
             self._clean_region_data()
@@ -168,26 +172,19 @@ class RegionGenreAnalyzer:
             print(f"✅ Successfully loaded unified data")
             print(f"📍 Regions: {len(self.regions_df)} unique regions")
             print(f"🎭 Genre-Region Records: {len(self.genres_df)} total combinations")
+            print(f"🌍 Global total unsold supply: {self.global_total_unsold_supply:,.0f}")
             
         except Exception as e:
             logging.error(f"Error loading unified data: {e}")
             raise
     
-    def _calculate_business_metrics(self):
-        """Calculate x and y values as in original genre scorer."""
-        self.genres_df['unsold_supply_calc'] = self.genres_df['sum_request'] - self.genres_df['sum_response']
-        total_unsold_supply = self.genres_df['unsold_supply_calc'].sum()
+    def _calculate_global_business_metrics(self):
+        """Calculate global business metrics from original complete dataset."""
+        self.original_genres_df['unsold_supply_calc'] = self.original_genres_df['sum_request'] - self.original_genres_df['sum_response']
+        self.global_total_unsold_supply = self.original_genres_df['unsold_supply_calc'].sum()
         
-        self.genres_df['x_calc'] = (self.genres_df['unsold_supply_calc'] / total_unsold_supply) * 100
-        self.genres_df['y_calc'] = np.where(
-            self.genres_df['sum_request'] == 0,
-            0,
-            (self.genres_df['unsold_supply_calc'] / self.genres_df['sum_request']) * 100
-        )
-        
-        print(f"📊 Calculated business metrics")
-        print(f"📈 x range: {self.genres_df['x_calc'].min():.4f} - {self.genres_df['x_calc'].max():.4f}")
-        print(f"📈 y range: {self.genres_df['y_calc'].min():.4f} - {self.genres_df['y_calc'].max():.4f}")
+        print(f"📊 Calculated global business metrics from complete dataset")
+        print(f"🌍 Global total unsold supply: {self.global_total_unsold_supply:,.0f}")
     
     def _clean_region_data(self):
         """Clean and prepare region data."""
@@ -236,9 +233,6 @@ class RegionGenreAnalyzer:
             self.genres_df['de_region'] + '_' +
             self.genres_df['de_region_updated']
         )
-        
-        # DO NOT remove duplicates - preserve all genre-region combinations
-        # This allows the same genre to exist in multiple regions
         
         # Create list of unique genres (for description purposes)
         self.genres_list = self.genres_df['genre_updated'].unique().tolist()
@@ -454,77 +448,155 @@ class RegionGenreAnalyzer:
         
         return distance_matrix
     
-    def _find_top_nearby_regions(self, region_input: str, top_n: int = 20) -> List[Dict]:
-        """Find top N nearby regions with distance information."""
-        if self.distance_matrix is None:
-            raise ValueError("Distance matrix not calculated")
-        
-        logging.info(f"Searching for regions matching: '{region_input}'")
-        
-        search_query_lower = region_input.lower().strip()
-        
-        # Search for exact match (case-insensitive)
-        matched_idx = None
-        for idx, row in self.successful_regions.iterrows():
-            if (row['de_region_updated'].lower() == search_query_lower or
-                row['de_region'].lower() == search_query_lower or
-                f"{row['de_region_updated']}, {row['de_country']}".lower() == search_query_lower or
-                f"{row['de_region']}, {row['de_country']}".lower() == search_query_lower):
-                matched_idx = idx
-                break
-        
-        if matched_idx is None:
-            logging.warning(f"No match found for '{region_input}'")
+    def parse_multiple_inputs(self, user_input: str) -> List[str]:
+        """Parse comma-separated input into list of items."""
+        if not user_input or not user_input.strip():
             return []
         
-        # Get distances to all other regions
-        distances = self.distance_matrix[matched_idx]
+        # Split by comma, strip whitespace, filter empty
+        items = [item.strip() for item in user_input.split(',') if item.strip()]
+        return items
+    
+    def _find_input_regions_coordinates(self, input_regions: List[str]) -> List[Dict]:
+        """Find coordinates for all input regions."""
+        found_regions = []
         
-        # Create list of nearby regions (excluding self)
+        for region_input in input_regions:
+            search_query_lower = region_input.lower().strip()
+            
+            # Search for exact match (case-insensitive)
+            matched_region = None
+            for idx, row in self.successful_regions.iterrows():
+                if (row['de_region_updated'].lower() == search_query_lower or
+                    row['de_region'].lower() == search_query_lower or
+                    f"{row['de_region_updated']}, {row['de_country']}".lower() == search_query_lower or
+                    f"{row['de_region']}, {row['de_country']}".lower() == search_query_lower):
+                    matched_region = row.to_dict()
+                    matched_region['input_name'] = region_input
+                    found_regions.append(matched_region)
+                    break
+            
+            if matched_region is None:
+                print(f"⚠️  Warning: No match found for region '{region_input}'")
+        
+        return found_regions
+    
+    def _calculate_centroid_of_regions(self, regions: List[Dict]) -> Tuple[float, float]:
+        """Calculate the geographic centroid of multiple regions."""
+        if not regions:
+            raise ValueError("No regions provided for centroid calculation")
+        
+        latitudes = [region['latitude'] for region in regions]
+        longitudes = [region['longitude'] for region in regions]
+        
+        centroid_lat = sum(latitudes) / len(latitudes)
+        centroid_lon = sum(longitudes) / len(longitudes)
+        
+        return (centroid_lat, centroid_lon)
+    
+    def _find_regions_near_all_inputs(self, input_regions: List[str], max_distance_km: float = 500) -> List[Dict]:
+        """Find regions that are geographically close to ALL input regions."""
+        print(f"🔍 Finding regions near ALL input regions: {input_regions}")
+        
+        # Step 1: Find coordinates for all input regions
+        input_region_coords = self._find_input_regions_coordinates(input_regions)
+        
+        if not input_region_coords:
+            print("❌ No input regions found in database")
+            return []
+        
+        if len(input_region_coords) < len(input_regions):
+            print(f"⚠️  Only found {len(input_region_coords)} out of {len(input_regions)} input regions")
+        
+        # Step 2: Calculate centroid of input regions
+        centroid = self._calculate_centroid_of_regions(input_region_coords)
+        print(f"📍 Calculated centroid: {centroid[0]:.4f}, {centroid[1]:.4f}")
+        
+        # Step 3: Find all regions within max_distance_km of the centroid
         nearby_regions = []
-        for i, distance in enumerate(distances):
-            if i != matched_idx and distance != np.inf:
-                region_data = self.successful_regions.iloc[i].to_dict()
-                region_data['distance_km'] = round(distance, 2)
-                region_data['distance_miles'] = round(distance * 0.621371, 2)
-                region_data['proximity_rank'] = len([d for d in distances if d < distance and d != np.inf]) + 1
+        
+        for idx, row in self.successful_regions.iterrows():
+            region_coords = (row['latitude'], row['longitude'])
+            distance_to_centroid = geodesic(centroid, region_coords).kilometers
+            
+            if distance_to_centroid <= max_distance_km:
+                region_data = row.to_dict()
+                region_data['distance_to_centroid_km'] = round(distance_to_centroid, 2)
+                region_data['distance_to_centroid_miles'] = round(distance_to_centroid * 0.621371, 2)
                 nearby_regions.append(region_data)
         
-        # Sort by distance and return top N
-        nearby_regions.sort(key=lambda x: x['distance_km'])
+        # Sort by distance to centroid
+        nearby_regions.sort(key=lambda x: x['distance_to_centroid_km'])
         
-        matched_region = self.successful_regions.iloc[matched_idx]
-        logging.info(f"Found match: {matched_region['de_region_updated']}, {matched_region['de_country']}")
+        print(f"✅ Found {len(nearby_regions)} regions within {max_distance_km}km of centroid")
         
-        # Include the input region as well (rank 0)
-        input_region_data = matched_region.to_dict()
-        input_region_data['distance_km'] = 0.0
-        input_region_data['distance_miles'] = 0.0
-        input_region_data['proximity_rank'] = 0
+        # Include input regions in the result (they should already be included, but ensure they're marked)
+        input_region_codes = [r['de_region'] for r in input_region_coords]
+        for region in nearby_regions:
+            region['is_input_region'] = region['de_region'] in input_region_codes
         
-        return [input_region_data] + nearby_regions[:top_n]
+        return nearby_regions
     
-    def _filter_data_by_regions(self, top_regions: List[Dict]) -> pd.DataFrame:
-        """Filter main DataFrame to only include data from top regions."""
-        if not top_regions:
+    def _filter_data_by_regions(self, selected_regions: List[Dict]) -> pd.DataFrame:
+        """Filter main DataFrame to only include data from selected regions."""
+        if not selected_regions:
             return self.genres_df.copy()
         
-        # Extract region codes from top regions
-        top_region_codes = [region['de_region'] for region in top_regions]
+        # Extract region codes from selected regions
+        selected_region_codes = [region['de_region'] for region in selected_regions]
         
         # Filter genres_df to only rows with these regions
-        # Now that we have region information in genres_df, we can properly filter
-        filtered_data = self.genres_df[self.genres_df['de_region'].isin(top_region_codes)].copy()
+        filtered_data = self.genres_df[self.genres_df['de_region'].isin(selected_region_codes)].copy()
         
         # If no data found with exact region codes, fall back to all data
         if len(filtered_data) == 0:
             logging.warning("No genre data found for specified regions, using all data")
             filtered_data = self.genres_df.copy()
         
-        print(f"🔍 Filtered data to top {len(top_regions)} regions")
+        print(f"🔍 Filtered data to {len(selected_regions)} selected regions")
         print(f"📊 Working with {len(filtered_data)} genre records from {filtered_data['de_region'].nunique()} regions")
         
         return filtered_data
+    
+    def _aggregate_data_by_genre(self, filtered_data: pd.DataFrame) -> pd.DataFrame:
+        """Group filtered data by genre and aggregate metrics."""
+        print(f"🔄 Aggregating data by genre...")
+        
+        # Calculate filtered total unsold supply from the filtered regions data
+        filtered_data['unsold_supply_calc'] = filtered_data['sum_request'] - filtered_data['sum_response']
+        filtered_total_unsold_supply = filtered_data['unsold_supply_calc'].sum()
+        
+        # Group by genre and sum the metrics
+        aggregated = filtered_data.groupby('genre_updated').agg({
+            'sum_request': 'sum',
+            'sum_response': 'sum',
+            'description': 'first'  # Take first description for each genre
+        }).reset_index()
+        
+        # Calculate aggregated business metrics
+        aggregated['unsold_supply'] = aggregated['sum_request'] - aggregated['sum_response']
+        
+        # Calculate Y (normal calculation per genre)
+        # If unsold_supply is 0, Y should also be 0 regardless of sum_request
+        aggregated['y'] = np.where(
+            (aggregated['sum_request'] == 0) | (aggregated['unsold_supply'] == 0),
+            0,
+            (aggregated['unsold_supply'] / aggregated['sum_request']) * 100
+        )
+        
+        # Calculate X using FILTERED total_unsold_supply from selected regions only
+        aggregated['x'] = np.where(
+            filtered_total_unsold_supply == 0,
+            0,
+            (aggregated['unsold_supply'] / filtered_total_unsold_supply) * 100
+        )
+        
+        print(f"✅ Aggregated to {len(aggregated)} unique genres")
+        print(f"📊 Aggregated metrics calculated using filtered total: {filtered_total_unsold_supply:,.0f}")
+        print(f"📈 x range: {aggregated['x'].min():.4f} - {aggregated['x'].max():.4f}")
+        print(f"📈 y range: {aggregated['y'].min():.4f} - {aggregated['y'].max():.4f}")
+        
+        return aggregated
     
     def _get_titan_embedding(self, text: str) -> List[float]:
         """Get embedding for a single text string using Amazon Titan Text Embeddings V2."""
@@ -652,104 +724,59 @@ class RegionGenreAnalyzer:
             embedding = self._get_titan_embedding(combined_text)
             self.embedding_cache[genre] = embedding
         return self.embedding_cache[genre]
-    
-    def _generate_embeddings(self):
-        """Generate embeddings for all genre names and their descriptions combined using Titan."""
-        try:
-            print("🔄 Generating embeddings for all genres and their descriptions...")
-            
-            # Combine genre name with description for each genre
-            combined_texts = []
-            for genre in self.genres_list:
-                description = self.genre_descriptions.get(genre, self._generate_fallback_description(genre))
-                combined_text = f"{genre}: {description}"
-                combined_texts.append(combined_text)
-            
-            # Generate embeddings for combined genre+description texts using Titan
-            embeddings_list = []
-            for i, combined_text in enumerate(combined_texts):
-                logging.info(f"Processing genre {i+1}/{len(combined_texts)}: {self.genres_list[i]}")
-                embedding = self._get_titan_embedding(combined_text)
-                embeddings_list.append(embedding)
-            
-            self.genre_embeddings = np.array(embeddings_list)
-            
-            print(f"✅ Generated embeddings for {len(self.genres_list)} genres")
-            print(f"📊 Embedding dimension: {self.genre_embeddings.shape[1]}")
-            
-        except Exception as e:
-            logging.error(f"Error generating embeddings: {e}")
-            raise
-    
-    def _generate_embeddings_for_filtered_data(self, filtered_data: pd.DataFrame):
-        """Generate embeddings for filtered genres using lazy loading with caching."""
-        try:
-            print("🔄 Getting embeddings for filtered genre data...")
-            
-            # Get unique genres from filtered data
-            filtered_genres = filtered_data['genre_updated'].unique().tolist()
-            
-            # Get embeddings using lazy loading (from cache or compute on-demand)
-            embeddings_list = []
-            valid_filtered_genres = []
-            
-            for genre in filtered_genres:
-                try:
-                    embedding = self._get_or_compute_embedding(genre)
-                    embeddings_list.append(embedding)
-                    valid_filtered_genres.append(genre)
-                except Exception as e:
-                    logging.warning(f"Failed to get embedding for genre '{genre}': {e}")
-                    continue
-            
-            if embeddings_list:
-                self.filtered_genre_embeddings = np.array(embeddings_list)
-                self.filtered_genres_list = valid_filtered_genres
-                
-                print(f"✅ Ready with embeddings for {len(valid_filtered_genres)} filtered genres")
-                print(f"📊 Embedding dimension: {self.filtered_genre_embeddings.shape[1]}")
-            else:
-                logging.warning("No valid embeddings generated for filtered data")
-                self.filtered_genre_embeddings = np.array([])
-                self.filtered_genres_list = []
-            
-        except Exception as e:
-            logging.error(f"Error generating filtered embeddings: {e}")
-            raise
-    
-    def _calculate_similarity_on_filtered_data(self, input_genre: str, filtered_data: pd.DataFrame) -> List[Dict]:
-        """Calculate similarity scores using filtered genre data."""
+    def _calculate_similarity_on_aggregated_data(self, input_genre: str, aggregated_data: pd.DataFrame) -> List[Dict]:
+        """Calculate similarity scores using aggregated genre data."""
         try:
             # Get embedding for input genre using lazy loading
             input_embedding_list = self._get_or_compute_embedding(input_genre)
             input_embedding = np.array([input_embedding_list])  # Reshape for cosine_similarity
             
-            # Calculate cosine similarity with filtered genre+description embeddings
-            similarities = cosine_similarity(input_embedding, self.filtered_genre_embeddings)[0]
+            # Get embeddings for all genres in aggregated data
+            aggregated_genres = aggregated_data['genre_updated'].tolist()
+            aggregated_embeddings = []
+            
+            for genre in aggregated_genres:
+                try:
+                    embedding = self._get_or_compute_embedding(genre)
+                    aggregated_embeddings.append(embedding)
+                except Exception as e:
+                    logging.warning(f"Failed to get embedding for genre '{genre}': {e}")
+                    continue
+            
+            if not aggregated_embeddings:
+                logging.warning("No valid embeddings generated for aggregated data")
+                return []
+            
+            aggregated_embeddings_array = np.array(aggregated_embeddings)
+            
+            # Calculate cosine similarity with aggregated genre+description embeddings
+            similarities = cosine_similarity(input_embedding, aggregated_embeddings_array)[0]
             
             # Create results list with genre info and similarity scores
             results = []
             for i, similarity_score in enumerate(similarities):
-                genre_name = self.filtered_genres_list[i]
-                genre_rows = filtered_data[filtered_data['genre_updated'] == genre_name]
+                if i >= len(aggregated_genres):
+                    continue
+                    
+                genre_name = aggregated_genres[i]
+                genre_row = aggregated_data[aggregated_data['genre_updated'] == genre_name].iloc[0]
+                genre_description = self.genre_descriptions.get(genre_name, "")
                 
-                if len(genre_rows) > 0:
-                    genre_row = genre_rows.iloc[0]
-                    genre_description = self.genre_descriptions.get(genre_name, "")
-                    
-                    # Skip if it's the exact same genre (similarity = 1.0)
-                    if similarity_score >= 0.999 and genre_name.lower() == input_genre.lower():
-                        continue
-                    
-                    result = {
-                        'id': int(genre_row['id']),
-                        'genre': genre_name,
-                        'description': genre_description,
-                        'similarity_score': float(similarity_score),
-                        'x': float(genre_row['x_calc']),
-                        'y': float(genre_row['y_calc'])
-                    }
-                    results.append(result)
+                # Skip if it's the exact same genre (similarity = 1.0)
+                if similarity_score >= 0.999 and genre_name.lower() == input_genre.lower():
+                    continue
+                
+                result = {
+                    'genre': genre_name,
+                    'description': genre_description,
+                    'similarity_score': float(similarity_score),
+                    'x': float(genre_row['x']),
+                    'y': float(genre_row['y']),
+                    'sum_request': int(genre_row['sum_request']),
+                    'sum_response': int(genre_row['sum_response']),
+                    'unsold_supply': int(genre_row['unsold_supply'])
+                }
+                results.append(result)
             
             # Sort by similarity score (descending)
             results.sort(key=lambda x: x['similarity_score'], reverse=True)
@@ -757,17 +784,17 @@ class RegionGenreAnalyzer:
             return results
             
         except Exception as e:
-            logging.error(f"Error calculating similarity on filtered data: {e}")
+            logging.error(f"Error calculating similarity on aggregated data: {e}")
             return []
     
-    def _compute_weighted_average_ranking_on_filtered_data(self, input_genre: str, filtered_data: pd.DataFrame, top_k: int = 10) -> List[Dict]:
-        """Get similar genres using dynamic threshold on filtered data."""
+    def _compute_weighted_average_ranking_on_aggregated_data(self, input_genre: str, aggregated_data: pd.DataFrame, top_k: int = 10) -> List[Dict]:
+        """Get similar genres using dynamic threshold on aggregated data."""
         # Get ALL similarity results first (no top_k limit, no min_similarity filter)
-        print(f"🔍 Getting all similarity scores for '{input_genre}' on filtered data...")
-        all_similar_genres = self._calculate_similarity_on_filtered_data(input_genre, filtered_data)
+        print(f"🔍 Getting all similarity scores for '{input_genre}' on aggregated data...")
+        all_similar_genres = self._calculate_similarity_on_aggregated_data(input_genre, aggregated_data)
         
         if not all_similar_genres:
-            print(f"❌ No similar genres found for '{input_genre}' in filtered data")
+            print(f"❌ No similar genres found for '{input_genre}' in aggregated data")
             return []
         
         # Find the highest similarity score
@@ -797,12 +824,14 @@ class RegionGenreAnalyzer:
             weighted_average = (genre_data['x'] * 0.5) + (genre_data['y'] * 0.5)
             
             result = {
-                'id': genre_data['id'],
                 'genre': genre_data['genre'],
                 'description': genre_data['description'],
                 'similarity_score': genre_data['similarity_score'],
                 'x': genre_data['x'],
                 'y': genre_data['y'],
+                'sum_request': genre_data['sum_request'],
+                'sum_response': genre_data['sum_response'],
+                'unsold_supply': genre_data['unsold_supply'],
                 'weighted_average': weighted_average
             }
             weighted_results.append(result)
@@ -820,118 +849,198 @@ class RegionGenreAnalyzer:
         
         return final_results
     
-    def _handle_duplicate_genres_by_proximity(self, genre_results: List[Dict], filtered_data: pd.DataFrame, top_regions: List[Dict]) -> List[Dict]:
-        """For duplicate genres, keep only the one from the nearest region."""
-        genre_dict = {}
+    def _analyze_single_genre_on_aggregated_data(self, input_genre: str, aggregated_data: pd.DataFrame, top_k: int = 10) -> List[Dict]:
+        """Run similarity analysis for a single input genre against aggregated data."""
+        print(f"\n🎭 Analyzing genre '{input_genre}' on aggregated data...")
         
-        # Create a mapping of region codes to distances for quick lookup
-        region_distance_map = {region['de_region']: region['distance_km'] for region in top_regions}
+        # Run weighted average ranking analysis
+        results = self._compute_weighted_average_ranking_on_aggregated_data(input_genre, aggregated_data, top_k)
         
-        for result in genre_results:
-            genre_name = result['genre']
-            genre_id = result['id']
-            
-            # Find the region for this specific genre instance
-            genre_rows = filtered_data[filtered_data['id'] == genre_id]
-            if len(genre_rows) == 0:
-                continue
-                
-            genre_row = genre_rows.iloc[0]
-            region_code = genre_row['de_region']
-            region_distance = region_distance_map.get(region_code, float('inf'))
-            
-            # Add region information to result
-            result['region_code'] = region_code
-            result['region'] = genre_row['de_region_updated']
-            result['country'] = genre_row['de_country']
-            result['distance_from_input_region_km'] = region_distance
-            result['distance_from_input_region_miles'] = region_distance * 0.621371
-            
-            # Find proximity rank for this region
-            result['region_proximity_rank'] = next(
-                (region['proximity_rank'] for region in top_regions if region['de_region'] == region_code),
-                999
-            )
-            
-            if genre_name not in genre_dict:
-                genre_dict[genre_name] = result
-            else:
-                # Keep the one from the nearer region
-                if region_distance < genre_dict[genre_name]['distance_from_input_region_km']:
-                    genre_dict[genre_name] = result
+        if not results:
+            print(f"❌ No results found for genre '{input_genre}'")
+            return []
         
-        return list(genre_dict.values())
-
-    def _enhance_results_with_region_info(self, genre_results: List[Dict], top_regions: List[Dict], filtered_data: pd.DataFrame) -> List[Dict]:
-        """Add region information to genre similarity results and handle duplicates by proximity."""
-        # First, handle duplicate genres by keeping only the nearest ones
-        proximity_filtered_results = self._handle_duplicate_genres_by_proximity(genre_results, filtered_data, top_regions)
-        
-        # Sort by weighted average (descending) to maintain ranking
-        proximity_filtered_results.sort(key=lambda x: x['weighted_average'], reverse=True)
-        
-        print(f"🎯 After proximity filtering: {len(proximity_filtered_results)} unique genres")
-        if len(proximity_filtered_results) != len(genre_results):
-            print(f"📍 Removed {len(genre_results) - len(proximity_filtered_results)} duplicate genres, keeping nearest regions")
-        
-        return proximity_filtered_results
+        print(f"✅ Found {len(results)} similar genres for '{input_genre}'")
+        return results
     
-    def analyze_region_genre(self, region_input: str, genre_input: str, top_k: int = 10) -> List[Dict]:
+    def _process_multiple_genres(self, input_genres: List[str], aggregated_data: pd.DataFrame, top_k: int = 10) -> Dict[str, List[Dict]]:
+        """Process multiple input genres and return separate results for each."""
+        print(f"\n🎭 Processing {len(input_genres)} input genres...")
+        
+        results_by_genre = {}
+        
+        for i, genre in enumerate(input_genres, 1):
+            print(f"\n{'='*80}")
+            print(f"🎯 Processing Genre {i}/{len(input_genres)}: '{genre}'")
+            print(f"{'='*80}")
+            
+            genre_results = self._analyze_single_genre_on_aggregated_data(genre, aggregated_data, top_k)
+            results_by_genre[genre] = genre_results
+            
+            if genre_results:
+                print(f"✅ Completed analysis for '{genre}': {len(genre_results)} results")
+            else:
+                print(f"⚠️  No results found for '{genre}'")
+        
+        print(f"\n🎯 Completed processing all {len(input_genres)} genres")
+        return results_by_genre
+    
+    def analyze_multi_region_multi_genre(self, input_regions: List[str], input_genres: List[str], 
+                                       max_distance_km: float = 500, top_k: int = 10) -> Dict[str, Any]:
         """
-        Main analysis method: filter by region, then analyze genre similarity.
+        Main analysis method: process multiple regions and genres.
         
         Args:
-            region_input (str): Region name/code to filter by
-            genre_input (str): Genre to analyze similarity for
-            top_k (int): Number of top results to return
+            input_regions (List[str]): List of region names to analyze
+            input_genres (List[str]): List of genres to analyze similarity for
+            max_distance_km (float): Maximum distance from centroid to include regions (default: 500km)
+            top_k (int): Number of top results to return per genre (default: 10)
             
         Returns:
-            List[Dict]: Enhanced results with region and genre information
+            Dict[str, Any]: Complete analysis results with region info and genre results
         """
         try:
-            print(f"\n🔍 Starting analysis for region '{region_input}' and genre '{genre_input}'")
+            print(f"\n{'='*120}")
+            print(f"🌍 MULTI-REGION MULTI-GENRE ANALYSIS")
+            print(f"📍 Input Regions: {input_regions}")
+            print(f"🎭 Input Genres: {input_genres}")
+            print(f"📏 Max Distance: {max_distance_km}km")
+            print(f"🎯 Top Results per Genre: {top_k}")
+            print(f"{'='*120}")
             
-            # Step 1: Find top 20 nearby regions
-            print(f"📍 Finding top 20 nearby regions...")
-            top_regions = self._find_top_nearby_regions(region_input)
+            # Step 1: Find regions near ALL input regions
+            print(f"\n📍 Step 1: Finding regions near ALL input regions...")
+            selected_regions = self._find_regions_near_all_inputs(input_regions, max_distance_km)
             
-            if not top_regions:
-                print(f"❌ No regions found matching '{region_input}'")
-                return []
+            if not selected_regions:
+                print(f"❌ No regions found near input regions")
+                return {
+                    'selected_regions': [],
+                    'input_regions': input_regions,
+                    'input_genres': input_genres,
+                    'results': {},
+                    'error': 'No regions found near input regions'
+                }
             
-            print(f"✅ Found {len(top_regions)} nearby regions")
+            print(f"✅ Selected {len(selected_regions)} regions for analysis")
             
-            # Step 2: Filter data to only these regions
-            print(f"🔍 Filtering data to top {len(top_regions)} regions...")
-            filtered_data = self._filter_data_by_regions(top_regions)
+            # Step 2: Filter data to selected regions
+            print(f"\n🔍 Step 2: Filtering data to selected regions...")
+            filtered_data = self._filter_data_by_regions(selected_regions)
             
-            # Step 3: Generate embeddings for filtered data
-            print(f"🔄 Generating embeddings for filtered data...")
-            self._generate_embeddings_for_filtered_data(filtered_data)
+            # Step 3: Aggregate data by genre
+            print(f"\n📊 Step 3: Aggregating data by genre...")
+            aggregated_data = self._aggregate_data_by_genre(filtered_data)
             
-            # Step 4: Run genre similarity analysis on filtered data
-            print(f"🎭 Analyzing genre similarity for '{genre_input}' on filtered data...")
-            genre_results = self._compute_weighted_average_ranking_on_filtered_data(genre_input, filtered_data, top_k)
+            # Step 4: Process multiple genres
+            print(f"\n🎭 Step 4: Processing multiple genres...")
+            genre_results = self._process_multiple_genres(input_genres, aggregated_data, top_k)
             
-            if not genre_results:
-                print(f"❌ No genre similarity results found")
-                return []
+            # Prepare final results
+            analysis_results = {
+                'selected_regions': selected_regions,
+                'input_regions': input_regions,
+                'input_genres': input_genres,
+                'aggregated_genres_count': len(aggregated_data),
+                'max_distance_km': max_distance_km,
+                'top_k': top_k,
+                'results': genre_results
+            }
             
-            # Step 5: Enhance results with region information
-            print(f"🌍 Enhancing results with region information...")
-            enhanced_results = self._enhance_results_with_region_info(genre_results, top_regions, filtered_data)
+            print(f"\n✅ Multi-region multi-genre analysis completed successfully")
+            print(f"📊 Processed {len(selected_regions)} regions and {len(input_genres)} genres")
             
-            print(f"✅ Analysis completed successfully")
-            print(f"📊 Returning {len(enhanced_results)} enhanced results")
-            
-            return enhanced_results
+            return analysis_results
             
         except Exception as e:
-            logging.error(f"Error in analyze_region_genre: {e}")
+            logging.error(f"Error in analyze_multi_region_multi_genre: {e}")
             print(f"❌ Analysis failed: {e}")
-            return []
+            return {
+                'selected_regions': [],
+                'input_regions': input_regions,
+                'input_genres': input_genres,
+                'results': {},
+                'error': str(e)
+            }
     
-    def get_region_suggestions(self, limit: int = 10) -> List[str]:
+    def _display_selected_regions(self, selected_regions: List[Dict], input_regions: List[str]):
+        """Display the selected regions information."""
+        print(f"\n{'='*100}")
+        print(f"📍 SELECTED REGIONS ANALYSIS")
+        print(f"🎯 Input Regions: {', '.join(input_regions)}")
+        print(f"✅ Found {len(selected_regions)} regions within proximity")
+        print(f"{'='*100}")
+        
+        if not selected_regions:
+            print("❌ No regions selected.")
+            return
+        
+        print(f"{'Rank':<4} {'Region':<20} {'Country':<8} {'Distance to Centroid (km)':<25}")
+        print("-" * 85)
+        
+        for i, region in enumerate(selected_regions[:20], 1):  # Show top 20
+            print(f"{i:<4} {region['de_region_updated']:<20} {region['de_country']:<8} "
+                  f"{region['distance_to_centroid_km']:>22.1f}")
+        
+        if len(selected_regions) > 20:
+            print(f"... and {len(selected_regions) - 20} more regions")
+        
+        print("-" * 85)
+        input_count = sum(1 for r in selected_regions if r.get('is_input_region', False))
+        print(f"📊 Total: {len(selected_regions)} regions | Input regions included: {input_count}")
+    
+    def _display_genre_results(self, input_genre: str, results: List[Dict]):
+        """Display results for a single genre analysis."""
+        print(f"\n{'='*120}")
+        print(f"🎭 GENRE SIMILARITY RESULTS FOR: '{input_genre}'")
+        print(f"📊 Results ranked by weighted average (50% x + 50% y)")
+        print(f"{'='*120}")
+        
+        if not results:
+            print("❌ No results found.")
+            return
+        
+        print(f"{'Rank':<4} {'Genre':<30} {'Similarity':<12} {'X':<12} {'Y':<8} {'Weighted':<10} {'Supply':<10}")
+        print("-" * 110)
+        
+        for i, result in enumerate(results, 1):
+            similarity_pct = result['similarity_score'] * 100
+            print(f"{i:<4} {result['genre']:<30} "
+                  f"{similarity_pct:>10.2f}%  {result['x']:>10.6f}  {result['y']:>6.2f}  "
+                  f"{result['weighted_average']:>8.4f}  {result['unsold_supply']:>8,}")
+        
+        print("-" * 120)
+        print(f"📈 Found {len(results)} results")
+        if results:
+            print(f"🏆 Top result: '{results[0]['genre']}'")
+            print(f"📊 Weighted average range: {results[-1]['weighted_average']:.4f} - {results[0]['weighted_average']:.4f}")
+    
+    def _display_complete_results(self, analysis_results: Dict[str, Any]):
+        """Display complete analysis results."""
+        selected_regions = analysis_results['selected_regions']
+        input_regions = analysis_results['input_regions']
+        input_genres = analysis_results['input_genres']
+        genre_results = analysis_results['results']
+        
+        # Display selected regions
+        self._display_selected_regions(selected_regions, input_regions)
+        
+        # Display results for each genre
+        for genre, results in genre_results.items():
+            self._display_genre_results(genre, results)
+        
+        # Summary
+        print(f"\n{'='*120}")
+        print(f"📊 ANALYSIS SUMMARY")
+        print(f"📍 Regions analyzed: {len(selected_regions)}")
+        print(f"🎭 Genres processed: {len(input_genres)}")
+        total_results = sum(len(results) for results in genre_results.values())
+        print(f"🎯 Total recommendations: {total_results}")
+        print(f"📏 Max distance used: {analysis_results.get('max_distance_km', 500)}km")
+        print(f"🔢 Top results per genre: {analysis_results.get('top_k', 10)}")
+        print(f"{'='*120}")
+    
+    def get_region_suggestions(self, limit: int = 15) -> List[str]:
         """Get a list of available regions for user reference."""
         if self.successful_regions is None:
             return []
@@ -950,89 +1059,102 @@ class RegionGenreAnalyzer:
         return self.genres_list[:limit]
     
     def run_interactive_analysis(self):
-        """Run interactive region-genre analysis."""
-        print("\n" + "="*60)
-        print("🌍 REGION-GENRE ANALYZER")
-        print("="*60)
+        """Run interactive multi-region multi-genre analysis."""
+        print("\n" + "="*80)
+        print("🌍 MULTI-REGION MULTI-GENRE ANALYZER")
+        print("="*80)
         print(f"📍 Loaded {len(self.successful_regions)} geocoded regions")
         print(f"🎭 Loaded {len(self.genres_list)} genres with descriptions")
+        print("💡 Enter comma-separated values for multiple inputs")
+        print("📏 Default: 500km radius, top 10 results per genre")
         print("Type 'quit' to exit, 'list regions' or 'list genres' for suggestions")
-        print("-"*60)
+        print("-"*80)
         
         while True:
-            # Get region input
-            region_input = input("\n📍 Enter region name/code: ").strip()
+            # Get multiple regions input
+            regions_input = input("\n📍 Enter regions (comma-separated): ").strip()
             
-            if region_input.lower() in ['quit', 'exit', 'q']:
+            if regions_input.lower() in ['quit', 'exit', 'q']:
                 print("👋 Goodbye!")
                 break
             
-            if region_input.lower() == 'list regions':
+            if regions_input.lower() == 'list regions':
                 regions = self.get_region_suggestions()
                 print(f"\n📍 Available regions ({len(regions)}):")
                 for i, region in enumerate(regions[:15], 1):
-                    print(f"  {i+1}. {region}")
+                    print(f"  {i}. {region}")
                 if len(regions) > 15:
                     print(f"  ... and {len(regions) - 15} more")
                 continue
             
-            if not region_input:
+            if not regions_input:
                 continue
             
-            # Get genre input
-            genre_input = input("🎭 Enter genre name: ").strip()
+            # Parse regions input
+            input_regions = self.parse_multiple_inputs(regions_input)
+            if not input_regions:
+                print("⚠️  Please enter at least one region")
+                continue
             
-            if genre_input.lower() == 'list genres':
+            print(f"✅ Parsed {len(input_regions)} regions: {input_regions}")
+            
+            # Get multiple genres input
+            genres_input = input("🎭 Enter genres (comma-separated): ").strip()
+            
+            if genres_input.lower() == 'list genres':
                 genres = self.get_genre_suggestions()
                 print(f"\n🎭 Available genres ({len(genres)}):")
                 for i, genre in enumerate(genres[:15], 1):
-                    print(f"  {i+1}. {genre}")
+                    print(f"  {i}. {genre}")
                 if len(genres) > 15:
                     print(f"  ... and {len(genres) - 15} more")
                 continue
             
-            if not genre_input:
+            if not genres_input:
                 continue
             
-            # Run analysis
-            print(f"\n🔍 Analyzing {genre_input} in regions near {region_input}...")
-            results = self.analyze_region_genre(region_input, genre_input)
+            # Parse genres input
+            input_genres = self.parse_multiple_inputs(genres_input)
+            if not input_genres:
+                print("⚠️  Please enter at least one genre")
+                continue
             
-            # Display enhanced results
-            self._display_enhanced_results(region_input, genre_input, results)
-    
-    def _display_enhanced_results(self, region_input: str, genre_input: str, results: List[Dict]):
-        """Display enhanced analysis results."""
-        print(f"\n{'='*120}")
-        print(f"🎯 REGION-GENRE ANALYSIS RESULTS")
-        print(f"📍 Input Region: '{region_input}' | 🎭 Input Genre: '{genre_input}'")
-        print(f"📊 Results ranked by weighted average (50% similarity + 50% business metrics)")
-        print(f"🌍 Data filtered to top 20 nearby regions")
-        print(f"{'='*120}")
-        
-        if not results:
-            print("❌ No results found.")
-            return
-        
-        print(f"{'Rank':<4} {'ID':<6} {'Genre':<20} {'Region':<15} {'Country':<5} {'Similarity':<10} {'Weighted':<10} {'Distance (km)':<12}")
-        print("-" * 130)
-        
-        for i, result in enumerate(results, 1):
-            similarity_pct = result['similarity_score'] * 100
-            print(f"{i:<4} {result['id']:<6} {result['genre']:<20} {result['region']:<15} {result['country']:<5} "
-                  f"{similarity_pct:>8.2f}%  {result['weighted_average']:>8.4f}%  "
-                  f"{result['distance_from_input_region_km']:>10.1f}")
-        
-        print("-" * 120)
-        print(f"📈 Found {len(results)} results")
-        if results:
-            print(f"🏆 Top result: '{results[0]['genre']}' in {results[0]['region']}, {results[0]['country']}")
-            print(f"📊 Weighted average range: {results[-1]['weighted_average']:.4f}% - {results[0]['weighted_average']:.4f}%")
-            print(f"🌍 Distance range: {results[-1]['distance_from_input_region_km']:.1f}km - {results[0]['distance_from_input_region_km']:.1f}km")
+            print(f"✅ Parsed {len(input_genres)} genres: {input_genres}")
+            
+            # Optional: Ask for custom parameters
+            custom_params = input("🔧 Use custom parameters? (y/N): ").strip().lower()
+            max_distance_km = 500  # Default
+            top_k = 10  # Default
+            
+            if custom_params in ['y', 'yes']:
+                try:
+                    distance_input = input(f"📏 Max distance in km (default {max_distance_km}): ").strip()
+                    if distance_input:
+                        max_distance_km = float(distance_input)
+                    
+                    top_k_input = input(f"🔢 Top results per genre (default {top_k}): ").strip()
+                    if top_k_input:
+                        top_k = int(top_k_input)
+                        
+                    print(f"✅ Using custom parameters: {max_distance_km}km radius, top {top_k} per genre")
+                except ValueError:
+                    print("⚠️  Invalid input, using defaults")
+            
+            # Run analysis
+            print(f"\n🔍 Starting multi-region multi-genre analysis...")
+            analysis_results = self.analyze_multi_region_multi_genre(
+                input_regions, input_genres, max_distance_km, top_k
+            )
+            
+            # Display results
+            if 'error' not in analysis_results:
+                self._display_complete_results(analysis_results)
+            else:
+                print(f"❌ Analysis failed: {analysis_results['error']}")
 
 
 def main():
-    """Main function to run the Region-Genre Analyzer."""
+    """Main function to run the Multi-Region Multi-Genre Analyzer."""
     
     # File paths
     excel_file = "knowledge/druid_query_results_with_descriptions.xlsx"
@@ -1040,7 +1162,7 @@ def main():
     
     try:
         # Initialize the analyzer
-        analyzer = RegionGenreAnalyzer(excel_file, cache_file)
+        analyzer = MultiRegionGenreAnalyzer(excel_file, cache_file)
         
         # Run interactive analysis
         analyzer.run_interactive_analysis()
@@ -1055,3 +1177,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
