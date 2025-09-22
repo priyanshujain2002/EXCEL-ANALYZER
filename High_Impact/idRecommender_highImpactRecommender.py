@@ -36,7 +36,7 @@ embedder_config = {
 
 # --- New code to list files in the subfolder ---
 knowledge_subfolder_name = "Original Packages" # Name of the folder inside 'knowledge/'
-base_knowledge_dir = "knowledge" # Assuming KNOWLEDGE_DIRECTORY resolves to this
+base_knowledge_dir = "High_Impact/knowledge" # Updated to point to the correct knowledge directory
 
 # Construct the full path to the subfolder to list its contents
 # This path is used for os.listdir, so it needs to be relative to the script location
@@ -46,8 +46,10 @@ excel_file_paths = []
 if os.path.exists(full_path_to_subfolder) and os.path.isdir(full_path_to_subfolder):
     for filename in os.listdir(full_path_to_subfolder):
         # We assume all files in this specific folder are relevant Excel files
-        # as per your instruction.
-        excel_file_paths.append(os.path.join(knowledge_subfolder_name, filename))
+        # ExcelKnowledgeSource expects paths relative to knowledge directory
+        # Since it prepends 'knowledge/', we need to provide path from knowledge directory
+        relative_path = os.path.join(knowledge_subfolder_name, filename)
+        excel_file_paths.append(relative_path)
 else:
     # Handle error: folder not found or is not a directory
     print(f"Error: Knowledge subfolder not found at {full_path_to_subfolder}")
@@ -69,7 +71,10 @@ full_path_to_high_impact_subfolder = os.path.join(base_knowledge_dir, high_impac
 high_impact_excel_file_paths = []
 if os.path.exists(full_path_to_high_impact_subfolder) and os.path.isdir(full_path_to_high_impact_subfolder):
     for filename in os.listdir(full_path_to_high_impact_subfolder):
-        high_impact_excel_file_paths.append(os.path.join(high_impact_subfolder_name, filename))
+        # ExcelKnowledgeSource expects paths relative to knowledge directory
+        # Since it prepends 'knowledge/', we need to provide path from knowledge directory
+        relative_path = os.path.join(high_impact_subfolder_name, filename)
+        high_impact_excel_file_paths.append(relative_path)
 else:
     print(f"Error: High Impact knowledge subfolder not found at {full_path_to_high_impact_subfolder}")
 

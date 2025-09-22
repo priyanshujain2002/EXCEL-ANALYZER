@@ -60,7 +60,7 @@ class MultiRegionGenreAnalyzer:
     """
     
     def __init__(self, excel_file_path: str = "knowledge/druid_query_results_with_descriptions.xlsx", 
-                 cache_file: str = "geocoding_cache.pkl"):
+                 cache_file: str = "Budget++/geocoding_cache.pkl"):
         """
         Initialize the Multi-Region Multi-Genre Analyzer.
         
@@ -787,7 +787,7 @@ class MultiRegionGenreAnalyzer:
             logging.error(f"Error calculating similarity on aggregated data: {e}")
             return []
     
-    def _compute_weighted_average_ranking_on_aggregated_data(self, input_genre: str, aggregated_data: pd.DataFrame, top_k: int = 10) -> List[Dict]:
+    def _compute_weighted_average_ranking_on_aggregated_data(self, input_genre: str, aggregated_data: pd.DataFrame, top_k: int = 5) -> List[Dict]:
         """Get similar genres using dynamic threshold on aggregated data."""
         # Get ALL similarity results first (no top_k limit, no min_similarity filter)
         print(f"🔍 Getting all similarity scores for '{input_genre}' on aggregated data...")
@@ -849,7 +849,7 @@ class MultiRegionGenreAnalyzer:
         
         return final_results
     
-    def _analyze_single_genre_on_aggregated_data(self, input_genre: str, aggregated_data: pd.DataFrame, top_k: int = 10) -> List[Dict]:
+    def _analyze_single_genre_on_aggregated_data(self, input_genre: str, aggregated_data: pd.DataFrame, top_k: int = 5) -> List[Dict]:
         """Run similarity analysis for a single input genre against aggregated data."""
         print(f"\n🎭 Analyzing genre '{input_genre}' on aggregated data...")
         
@@ -863,7 +863,7 @@ class MultiRegionGenreAnalyzer:
         print(f"✅ Found {len(results)} similar genres for '{input_genre}'")
         return results
     
-    def _process_multiple_genres(self, input_genres: List[str], aggregated_data: pd.DataFrame, top_k: int = 10) -> Dict[str, List[Dict]]:
+    def _process_multiple_genres(self, input_genres: List[str], aggregated_data: pd.DataFrame, top_k: int = 5) -> Dict[str, List[Dict]]:
         """Process multiple input genres and return separate results for each."""
         print(f"\n🎭 Processing {len(input_genres)} input genres...")
         
@@ -886,7 +886,7 @@ class MultiRegionGenreAnalyzer:
         return results_by_genre
     
     def analyze_multi_region_multi_genre(self, input_regions: List[str], input_genres: List[str], 
-                                       max_distance_km: float = 500, top_k: int = 10) -> Dict[str, Any]:
+                                       max_distance_km: float = 500, top_k: int = 5) -> Dict[str, Any]:
         """
         Main analysis method: process multiple regions and genres.
         
@@ -894,7 +894,7 @@ class MultiRegionGenreAnalyzer:
             input_regions (List[str]): List of region names to analyze
             input_genres (List[str]): List of genres to analyze similarity for
             max_distance_km (float): Maximum distance from centroid to include regions (default: 500km)
-            top_k (int): Number of top results to return per genre (default: 10)
+            top_k (int): Number of top results to return per genre (default: 5)
             
         Returns:
             Dict[str, Any]: Complete analysis results with region info and genre results
@@ -1037,7 +1037,7 @@ class MultiRegionGenreAnalyzer:
         total_results = sum(len(results) for results in genre_results.values())
         print(f"🎯 Total recommendations: {total_results}")
         print(f"📏 Max distance used: {analysis_results.get('max_distance_km', 500)}km")
-        print(f"🔢 Top results per genre: {analysis_results.get('top_k', 10)}")
+        print(f"🔢 Top results per genre: {analysis_results.get('top_k', 5)}")
         print(f"{'='*120}")
     
     def get_region_suggestions(self, limit: int = 15) -> List[str]:
@@ -1066,7 +1066,7 @@ class MultiRegionGenreAnalyzer:
         print(f"📍 Loaded {len(self.successful_regions)} geocoded regions")
         print(f"🎭 Loaded {len(self.genres_list)} genres with descriptions")
         print("💡 Enter comma-separated values for multiple inputs")
-        print("📏 Default: 500km radius, top 10 results per genre")
+        print("📏 Fixed parameters: 500km radius, top 5 results per genre")
         print("Type 'quit' to exit, 'list regions' or 'list genres' for suggestions")
         print("-"*80)
         
@@ -1121,24 +1121,9 @@ class MultiRegionGenreAnalyzer:
             
             print(f"✅ Parsed {len(input_genres)} genres: {input_genres}")
             
-            # Optional: Ask for custom parameters
-            custom_params = input("🔧 Use custom parameters? (y/N): ").strip().lower()
-            max_distance_km = 500  # Default
-            top_k = 10  # Default
-            
-            if custom_params in ['y', 'yes']:
-                try:
-                    distance_input = input(f"📏 Max distance in km (default {max_distance_km}): ").strip()
-                    if distance_input:
-                        max_distance_km = float(distance_input)
-                    
-                    top_k_input = input(f"🔢 Top results per genre (default {top_k}): ").strip()
-                    if top_k_input:
-                        top_k = int(top_k_input)
-                        
-                    print(f"✅ Using custom parameters: {max_distance_km}km radius, top {top_k} per genre")
-                except ValueError:
-                    print("⚠️  Invalid input, using defaults")
+            # Fixed parameters - no user input required
+            max_distance_km = 500  # Fixed radius
+            top_k = 5  # Fixed number of results per genre
             
             # Run analysis
             print(f"\n🔍 Starting multi-region multi-genre analysis...")
@@ -1177,4 +1162,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
