@@ -99,6 +99,9 @@ class MultiRegionGenreAnalyzer:
         # Lazy loading cache for embeddings
         self.embedding_cache = {}
         
+        # Normalized genre mapping for exact case-insensitive matching
+        self.normalized_genre_descriptions = {}
+        
         # AWS/CrewAI components
         self.llm = None
         self.genre_description_agent = None
@@ -254,6 +257,9 @@ class MultiRegionGenreAnalyzer:
         logging.info(f"Cleaned genre data: {len(self.genres_df)} total genre-region combinations")
         logging.info(f"Unique genres: {len(self.genres_list)}")
         logging.info(f"Loaded {len(self.genre_descriptions)} genre descriptions")
+        
+        # Create normalized genre mapping for exact case-insensitive matching
+        self._create_normalized_genre_mapping()
     
     def _initialize_aws_components(self):
         """Initialize AWS Bedrock and CrewAI components."""
@@ -708,14 +714,40 @@ class MultiRegionGenreAnalyzer:
         """Generate a simple fallback description when CrewAI fails or no description exists."""
         return f"A {genre_name} genre characterized by its distinctive {genre_name} elements and style."
     
-    def _get_or_compute_embedding(self, genre: str) -> List[float]:
-        """Get embedding from cache or compute if not exists (lazy loading)."""
+    def _create_normalized_genre_mapping(self):
+        """Create a normalized mapping of genre names to descriptions for exact case-insensitive matching."""
+        self.normalized_genre_descriptions = {}
+        
+        for genre_name, description in self.genre_descriptions.items():
+            # Create lowercase key for exact case-insensitive matching
+            normalized_key = genre_name.lower().strip()
+            self.normalized_genre_descriptions[normalized_key] = {
+                'original_name': genre_name,
+                'description': description
+            }
+        
+        logging.info(f"Created normalized genre mapping with {len(self.normalized_genre_descriptions)} entries")
+        print(f"🗂️  Created normalized genre mapping for exact case-insensitive matching")
+    
+    def _get_or_compute_embedding_optimized(self, genre: str) -> List[float]:
+        """Get embedding from cache or compute if not exists with minimal logging."""
         if genre not in self.embedding_cache:
-            # Check if genre exists in our dataset
-            if genre in self.genre_descriptions:
-                description = self.genre_descriptions[genre]
+            # Normalize input genre for exact case-insensitive matching
+            normalized_input = genre.lower().strip()
+            
+            # Check if genre exists in our normalized mapping (optimized lookup)
+            if normalized_input in self.normalized_genre_descriptions:
+                # Use existing description from our dataset
+                genre_info = self.normalized_genre_descriptions[normalized_input]
+                description = genre_info['description']
+                original_genre_name = genre_info['original_name']
+                
+                # Only log for input genre, not for every genre in the dataset
+                if genre == normalized_input:  # This indicates it's the input genre
+                    print(f"📚 Found existing description for '{genre}' (matched as '{original_genre_name}')")
             else:
-                # Generate description for new input genre
+                # Generate description for new input genre (not in our dataset)
+                print(f"🆕 Generating new description for input genre '{genre}' (not found in dataset)")
                 description = self._generate_genre_description(genre)
                 # Cache the description for future use
                 self.genre_descriptions[genre] = description
@@ -724,24 +756,78 @@ class MultiRegionGenreAnalyzer:
             embedding = self._get_titan_embedding(combined_text)
             self.embedding_cache[genre] = embedding
         return self.embedding_cache[genre]
+    
+    def _get_or_compute_embedding(self, genre: str) -> List[float]:
+        """Get embedding from cache or compute if not exists (lazy loading)."""
+        if genre not in self.embedding_cache:
+            # Normalize input genre for exact case-insensitive matching
+            normalized_input = genre.lower().strip()
+            
+            # Check if genre exists in our normalized mapping (optimized lookup)
+            if normalized_input in self.normalized_genre_descriptions:
+                # Use existing description from our dataset
+                genre_info = self.normalized_genre_descriptions[normalized_input]
+                description = genre_info['description']
+                original_genre_name = genre_info['original_name']
+                
+                print(f"📚 Found existing description for '{genre}' (matched as '{original_genre_name}')")
+            else:
+                # Generate description for new input genre (not in our dataset)
+                print(f"🆕 Generating new description for input genre '{genre}' (not found in dataset)")
+                description = self._generate_genre_description(genre)
+                # Cache the description for future use
+                self.genre_descriptions[genre] = description
+            
+            combined_text = f"{genre}: {description}"
+            embedding = self._get_titan_embedding(combined_text)
+            self.embedding_cache[genre] = embedding
+        return self.embedding_cache[genre]
+    
+    def _batch_get_embeddings(self, genre_list: List[str]) -> List[List[float]]:
+        """Batch process embeddings for multiple genres with reduced logging."""
+        embeddings = []
+        cached_count = 0
+        new_count = 0
+        
+        for genre in genre_list:
+            if genre in self.embedding_cache:
+                embeddings.append(self.embedding_cache[genre])
+                cached_count += 1
+            else:
+                # Use optimized lookup without verbose logging
+                normalized_input = genre.lower().strip()
+                
+                if normalized_input in self.normalized_genre_descriptions:
+                    genre_info = self.normalized_genre_descriptions[normalized_input]
+                    description = genre_info['description']
+                else:
+                    description = self._generate_genre_description(genre)
+                    self.genre_descriptions[genre] = description
+                
+                combined_text = f"{genre}: {description}"
+                embedding = self._get_titan_embedding(combined_text)
+                self.embedding_cache[genre] = embedding
+                embeddings.append(embedding)
+                new_count += 1
+        
+        print(f"📦 Embedding batch completed: {cached_count} cached, {new_count} new")
+        return embeddings
     def _calculate_similarity_on_aggregated_data(self, input_genre: str, aggregated_data: pd.DataFrame) -> List[Dict]:
-        """Calculate similarity scores using aggregated genre data."""
+        """Calculate similarity scores using aggregated genre data with optimized embedding lookup."""
         try:
-            # Get embedding for input genre using lazy loading
-            input_embedding_list = self._get_or_compute_embedding(input_genre)
+            # Process input genre first with minimal logging
+            print(f"🔍 Processing input genre: '{input_genre}'")
+            
+            # Get embedding for input genre using optimized lookup
+            input_embedding_list = self._get_or_compute_embedding_optimized(input_genre)
             input_embedding = np.array([input_embedding_list])  # Reshape for cosine_similarity
             
-            # Get embeddings for all genres in aggregated data
+            # Get embeddings for all genres in aggregated data using batch processing
             aggregated_genres = aggregated_data['genre_updated'].tolist()
-            aggregated_embeddings = []
+            print(f"📊 Processing {len(aggregated_genres)} genres for similarity calculation...")
             
-            for genre in aggregated_genres:
-                try:
-                    embedding = self._get_or_compute_embedding(genre)
-                    aggregated_embeddings.append(embedding)
-                except Exception as e:
-                    logging.warning(f"Failed to get embedding for genre '{genre}': {e}")
-                    continue
+            # Batch process embeddings to reduce individual logging
+            aggregated_embeddings = self._batch_get_embeddings(aggregated_genres)
             
             if not aggregated_embeddings:
                 logging.warning("No valid embeddings generated for aggregated data")
@@ -754,6 +840,8 @@ class MultiRegionGenreAnalyzer:
             
             # Create results list with genre info and similarity scores
             results = []
+            excluded_count = 0
+            
             for i, similarity_score in enumerate(similarities):
                 if i >= len(aggregated_genres):
                     continue
@@ -762,8 +850,16 @@ class MultiRegionGenreAnalyzer:
                 genre_row = aggregated_data[aggregated_data['genre_updated'] == genre_name].iloc[0]
                 genre_description = self.genre_descriptions.get(genre_name, "")
                 
-                # Skip if it's the exact same genre (similarity = 1.0)
-                if similarity_score >= 0.999 and genre_name.lower() == input_genre.lower():
+                # STRICT EXCLUSION: Always exclude if it's the exact same genre (case-insensitive)
+                if genre_name.lower() == input_genre.lower():
+                    excluded_count += 1
+                    print(f"🚫 Excluding exact match: '{genre_name}' (same as input '{input_genre}')")
+                    continue
+                
+                # ADDITIONAL EXCLUSION: Also exclude if similarity is extremely high (likely same genre with different formatting)
+                if similarity_score >= 0.99:
+                    excluded_count += 1
+                    print(f"🚫 Excluding high similarity match: '{genre_name}' (similarity: {similarity_score:.4f})")
                     continue
                 
                 result = {
@@ -780,6 +876,11 @@ class MultiRegionGenreAnalyzer:
             
             # Sort by similarity score (descending)
             results.sort(key=lambda x: x['similarity_score'], reverse=True)
+            
+            print(f"✅ Similarity calculation completed")
+            print(f"📊 Total genres processed: {len(aggregated_genres)}")
+            print(f"🚫 Excluded genres (input matches): {excluded_count}")
+            print(f"🎯 Valid recommendations: {len(results)}")
             
             return results
             
@@ -986,8 +1087,7 @@ class MultiRegionGenreAnalyzer:
             print(f"... and {len(selected_regions) - 20} more regions")
         
         print("-" * 85)
-        input_count = sum(1 for r in selected_regions if r.get('is_input_region', False))
-        print(f"📊 Total: {len(selected_regions)} regions | Input regions included: {input_count}")
+        print(f"📊 Total: {len(selected_regions)} regions")
     
     def _display_genre_results(self, input_genre: str, results: List[Dict]):
         """Display results for a single genre analysis."""
@@ -1000,16 +1100,16 @@ class MultiRegionGenreAnalyzer:
             print("❌ No results found.")
             return
         
-        print(f"{'Rank':<4} {'Genre':<30} {'Similarity':<12} {'X':<12} {'Y':<8} {'Weighted':<10} {'Supply':<10}")
-        print("-" * 110)
+        print(f"{'Rank':<4} {'Genre':<30} {'Similarity':<12} {'X':<12} {'Y':<8} {'Weighted':<10}")
+        print("-" * 90)
         
         for i, result in enumerate(results, 1):
             similarity_pct = result['similarity_score'] * 100
             print(f"{i:<4} {result['genre']:<30} "
                   f"{similarity_pct:>10.2f}%  {result['x']:>10.6f}  {result['y']:>6.2f}  "
-                  f"{result['weighted_average']:>8.4f}  {result['unsold_supply']:>8,}")
+                  f"{result['weighted_average']:>8.4f}")
         
-        print("-" * 120)
+        print("-" * 90)
         print(f"📈 Found {len(results)} results")
         if results:
             print(f"🏆 Top result: '{results[0]['genre']}'")
@@ -1047,10 +1147,7 @@ class MultiRegionGenreAnalyzer:
         
         regions = []
         for _, row in self.successful_regions.iterrows():
-            regions.extend([
-                f"{row['de_region_updated']}, {row['de_country']}",
-                f"{row['de_region']}, {row['de_country']}"
-            ])
+            regions.append(f"{row['de_region_updated']}, {row['de_country']}")
         
         return sorted(list(set(regions)))[:limit]
     

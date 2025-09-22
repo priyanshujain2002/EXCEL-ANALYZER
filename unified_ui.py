@@ -310,8 +310,7 @@ def display_budget_results():
                 'Rank': i,
                 'Region': region['de_region_updated'],
                 'Country': region['de_country'],
-                'Distance to Centroid (km)': region['distance_to_centroid_km'],
-                'Input Region': '✓' if region.get('is_input_region', False) else ''
+                'Distance to Centroid (km)': region['distance_to_centroid_km']
             })
         
         regions_df = pd.DataFrame(regions_data)
@@ -337,12 +336,10 @@ def display_budget_results():
             results_data.append({
                 'Rank': i,
                 'Genre': result['genre'],
-                'Description': result['description'][:100] + '...' if len(result['description']) > 100 else result['description'],
                 'Similarity (%)': f"{result['similarity_score']*100:.2f}",
-                'X Metric': f"{result['x']:.4f}",
+                'X Metric': f"{result['x']:.6f}",
                 'Y Metric': f"{result['y']:.2f}",
-                'Weighted Avg': f"{result['weighted_average']:.4f}",
-                'Unsold Supply': result['unsold_supply']
+                'Weighted Avg': f"{result['weighted_average']:.4f}"
             })
         
         results_df = pd.DataFrame(results_data)
