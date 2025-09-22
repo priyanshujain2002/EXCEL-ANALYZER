@@ -95,7 +95,7 @@ def store_high_impact_feedback(selected_placements, recommended_packages, feedba
     try:
         # Read existing Excel file
         try:
-            df_existing = pd.read_excel("Unified_Feedback.xlsx", sheet_name="High_Impact")
+            df_existing = pd.read_excel("Unified_Feedback.xlsx", sheet_name="High_Impact", engine='openpyxl')
             # Get the next Task ID (auto-increment)
             if df_existing.empty:
                 next_task_id = 1
@@ -128,11 +128,11 @@ def store_high_impact_feedback(selected_placements, recommended_packages, feedba
             
             # Also create/update Budget_Plus sheet if it doesn't exist
             try:
-                df_budget = pd.read_excel("Unified_Feedback.xlsx", sheet_name="Budget_Plus")
+                df_budget = pd.read_excel("Unified_Feedback.xlsx", sheet_name="Budget_Plus", engine='openpyxl')
                 df_budget.to_excel(writer, sheet_name="Budget_Plus", index=False)
             except:
                 # Create empty Budget_Plus sheet
-                df_budget_empty = pd.DataFrame(columns=['Task ID', 'Input Regions', 'Input Genres', 'Analysis Summary', 'Custom Feedback'])
+                df_budget_empty = pd.DataFrame(columns=['Task ID', 'Input Regions', 'Input Genres', 'Custom Feedback'])
                 df_budget_empty.to_excel(writer, sheet_name="Budget_Plus", index=False)
         
         return True
@@ -140,23 +140,30 @@ def store_high_impact_feedback(selected_placements, recommended_packages, feedba
         st.error(f"Failed to save High Impact feedback: {str(e)}")
         return False
 
-def store_budget_plus_feedback(input_regions, input_genres, analysis_summary, custom_feedback=""):
+def store_budget_plus_feedback(input_regions, input_genres, custom_feedback=""):
     """
     Store Budget++ feedback data to Unified_Feedback.xlsx
     """
     try:
         # Read existing Excel file
         try:
-            df_existing = pd.read_excel("Unified_Feedback.xlsx", sheet_name="Budget_Plus")
+            df_existing = pd.read_excel("Unified_Feedback.xlsx", sheet_name="Budget_Plus", engine='openpyxl')
             # Get the next Task ID (auto-increment)
             if df_existing.empty:
                 next_task_id = 1
             else:
                 next_task_id = df_existing['Task ID'].max() + 1
-        except FileNotFoundError:
-            # If file doesn't exist, create new DataFrame
+        except (FileNotFoundError, Exception) as e:
+            # If file doesn't exist or is corrupted, create new DataFrame
             next_task_id = 1
-            df_existing = pd.DataFrame(columns=['Task ID', 'Input Regions', 'Input Genres', 'Analysis Summary', 'Custom Feedback'])
+            df_existing = pd.DataFrame(columns=['Task ID', 'Input Regions', 'Input Genres', 'Custom Feedback'])
+            # Remove corrupted file if it exists
+            if os.path.exists("Unified_Feedback.xlsx"):
+                try:
+                    os.remove("Unified_Feedback.xlsx")
+                    st.warning("Corrupted feedback file detected and removed. Creating new file.")
+                except:
+                    pass
         
         # Format data as comma-separated strings
         input_regions_str = ", ".join(input_regions)
@@ -167,7 +174,7 @@ def store_budget_plus_feedback(input_regions, input_genres, analysis_summary, cu
             'Task ID': next_task_id,
             'Input Regions': input_regions_str,
             'Input Genres': input_genres_str,
-            'Analysis Summary': analysis_summary,
+            
             'Custom Feedback': custom_feedback
         }
         
@@ -345,29 +352,7 @@ def display_budget_results():
         results_df = pd.DataFrame(results_data)
         st.dataframe(results_df, use_container_width=True)
     
-    # Display summary
-    st.subheader("📊 Analysis Summary")
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Regions Analyzed", len(results['selected_regions']))
-    with col2:
-        st.metric("Genres Processed", len(results['input_genres']))
-    with col3:
-        total_results = sum(len(genre_list) for genre_list in results['results'].values())
-        st.metric("Total Recommendations", total_results)
-    with col4:
-        st.metric("Max Distance (km)", results['max_distance_km'])
 
-def create_budget_analysis_summary(results):
-    """Create a brief summary of Budget++ analysis for feedback"""
-    if not results or 'error' in results:
-        return "Analysis failed or no results available"
-    
-    selected_regions_count = len(results['selected_regions'])
-    input_genres_count = len(results['input_genres'])
-    total_recommendations = sum(len(genre_list) for genre_list in results['results'].values())
-    
-    return f"Analyzed {selected_regions_count} regions, {input_genres_count} genres. Found {total_recommendations} similar recommendations."
 
 # Main app
 def main():
@@ -634,14 +619,10 @@ def display_budget_plus_interface():
                 if not custom_feedback.strip():
                     st.warning("Please provide your feedback before submitting.")
                 else:
-                    # Create analysis summary
-                    analysis_summary = create_budget_analysis_summary(st.session_state.budget_results)
-                    
                     # Store feedback to Excel file
                     success = store_budget_plus_feedback(
                         st.session_state.budget_results['input_regions'],
                         st.session_state.budget_results['input_genres'],
-                        analysis_summary,
                         custom_feedback.strip()
                     )
                     
